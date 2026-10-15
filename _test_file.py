@@ -1,9 +1,9 @@
-"""Temporary test for ConfirmDialog. Delete after verifying."""
+"""Temporary test for ErrorDialog. Delete after verifying."""
 import sys
 
 from PyQt5.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
-from ui.dialogs.confirm_dialog import confirm
+from ui.dialogs.error_dialog import show_error
 from ui.theme.palette import LIGHT
 from ui.theme.stylesheet import stylesheet
 
@@ -11,7 +11,7 @@ from ui.theme.stylesheet import stylesheet
 class Demo(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Confirm dialog test")
+        self.setWindowTitle("Error dialog test")
         self.resize(600, 400)
         self.setStyleSheet(stylesheet(LIGHT))
 
@@ -20,51 +20,48 @@ class Demo(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setSpacing(8)
 
-        self.log = QLabel("  Click a button...")
-        self.log.setStyleSheet("padding: 12px; font-size: 14px;")
+        layout.addWidget(QLabel("  Click a button to see the error dialog:"))
 
-        # Test 1: Simple info confirm
-        b1 = QPushButton("Test 1: Info confirm")
-        b1.clicked.connect(lambda: self._log(
-            confirm(
-                self,
-                "Reset session?",
-                "All loaded CDR data will be cleared.",
-                ok_text="Reset",
-            )
+        # Test 1: Simple error with no traceback
+        b1 = QPushButton("Test 1: Simple message")
+        b1.clicked.connect(lambda: show_error(
+            self,
+            "Load failed",
+            "The CDR file could not be parsed.",
         ))
 
-        # Test 2: Danger confirm
-        b2 = QPushButton("Test 2: Danger confirm")
-        b2.clicked.connect(lambda: self._log(
-            confirm(
-                self,
-                "Delete target?",
-                "This action cannot be undone.",
-                danger=True,
-            )
+        # Test 2: Real exception with traceback
+        def raise_something():
+            try:
+                _ = 1 / 0
+            except ZeroDivisionError as e:
+                show_error(
+                    self,
+                    "Calculation error",
+                    "An unexpected error occurred during analysis.",
+                    exception=e,
+                )
+
+        b2 = QPushButton("Test 2: Exception with traceback")
+        b2.clicked.connect(raise_something)
+
+        # Test 3: Custom details
+        b3 = QPushButton("Test 3: Custom long details")
+        b3.clicked.connect(lambda: show_error(
+            self,
+            "Import failure",
+            "The import could not complete.",
+            details=(
+                "Row 42: missing 'party_b' column\n"
+                "Row 58: invalid timestamp format\n"
+                "Row 103: empty caller field\n" * 5
+            ),
         ))
 
-        # Test 3: Typed confirmation
-        b3 = QPushButton("Test 3: Typed confirmation (type DELETE)")
-        b3.clicked.connect(lambda: self._log(
-            confirm(
-                self,
-                "Permanent delete",
-                "Type DELETE to remove all records from the database.",
-                danger=True,
-                confirm_word="DELETE",
-            )
-        ))
-
-        layout.addWidget(self.log)
         layout.addWidget(b1)
         layout.addWidget(b2)
         layout.addWidget(b3)
         layout.addStretch()
-
-    def _log(self, result: bool):
-        self.log.setText(f"  Result: {'✅ Accepted' if result else '❌ Cancelled'}")
 
 
 app = QApplication(sys.argv)
