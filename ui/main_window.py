@@ -4,6 +4,7 @@ The window is the only component that:
   - Holds a Database and AuditTrail
   - Holds the currently loaded DataFrames (df_a, df_b)
   - Calls analyzers and pushes results into tabs
+  - Manages idle auto-lock, theme toggle, and keyboard shortcuts
 """
 from __future__ import annotations
 
@@ -11,18 +12,23 @@ import logging
 from pathlib import Path
 
 import pandas as pd
+from PyQt5.QtCore import QEvent, QTimer
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QShortcut,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from core.audit import AuditTrail
+from core.constants import IDLE_TIMEOUT_SECONDS
 from core.database import Database
 from data.analyzer.anomalies import night_calls, short_calls, summary
 from data.analyzer.colocation import colocation_events
@@ -33,6 +39,7 @@ from data.loader import load_single_file
 from ui.components.sidebar import Sidebar
 from ui.components.toolbar import TopToolbar
 from ui.components.toast import toast
+from ui.dialogs.login_dialog import LoginDialog
 from ui.tabs.anomalies_tab import AnomaliesTab
 from ui.tabs.dashboard_tab import DashboardTab
 from ui.tabs.database_tab import DatabaseTab
@@ -40,6 +47,8 @@ from ui.tabs.inspector_tab import InspectorTab
 from ui.tabs.map_tab import MapTab
 from ui.tabs.network_tab import NetworkTab
 from ui.tabs.report_tab import ReportTab
+from ui.theme.palette import DARK, LIGHT
+from ui.theme.stylesheet import stylesheet
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +83,10 @@ class MainWindow(QMainWindow):
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
 
+        # Theme + idle state
+        self._theme_is_dark = False
+        self._idle_seconds = 0
+
         # Build UI
         self._build_ui()
 
@@ -84,6 +97,10 @@ class MainWindow(QMainWindow):
             "LOGIN",
             "Session started.",
         )
+
+        # Install idle watcher + keyboard shortcuts
+        self._install_idle_watch()
+        self._install_shortcuts()
 
     # ============================================================
     # UI CONSTRUCTION
@@ -133,6 +150,9 @@ class MainWindow(QMainWindow):
         # 5. Wire toolbar signals
         self._wire_toolbar()
 
+        # 6. Apply theme
+        self._apply_theme()
+
     def _build_tabs(self) -> None:
         """Instantiate every tab and add it to the stack."""
         self.tab_dashboard = DashboardTab()
@@ -175,7 +195,7 @@ class MainWindow(QMainWindow):
         self.toolbar.load_bulk.connect(self._on_load_bulk)
         self.toolbar.load_target_b.connect(self._on_load_target_b)
         self.toolbar.search_changed.connect(self._on_search_changed)
-        # Note: toggle_theme and open_filters are wired in Step 55
+        self.toolbar.toggle_theme.connect(self._on_toggle_theme)
 
     # ============================================================
     # FILE LOADING
@@ -338,10 +358,136 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Analysis error", str(e))
 
     # ============================================================
+    # THEME
+    # ============================================================
+
+    def _apply_theme(self) -> None:
+        palette = DARK if self._theme_is_dark else LIGHT
+        self.setStyleSheet(stylesheet(palette))
+
+    def _on_toggle_theme(self) -> None:
+        self._theme_is_dark = not self._theme_is_dark
+        self._apply_theme()
+
+    # ============================================================
+    # IDLE AUTO-LOCK
+    # ============================================================
+
+    def _install_idle_watch(self) -> None:
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setInterval(1000)  # tick every second
+        self._idle_timer.timeout.connect(self._tick_idle)
+        self._idle_timer.start()
+
+        # Hook into global events so we can reset the counter
+        QApplication.instance().installEventFilter(self)
+
+    def _tick_idle(self) -> None:
+        self._idle_seconds += 1
+        remaining = max(0, IDLE_TIMEOUT_SECONDS - self._idle_seconds)
+        if hasattr(self, "lock_label"):
+            self.lock_label.setText(f"⏱  Auto-lock in {remaining}s")
+        if self._idle_seconds >= IDLE_TIMEOUT_SECONDS:
+            self._idle_seconds = 0
+            self._auto_lock()
+
+    def eventFilter(self, obj, event) -> bool:
+        """Reset idle counter on any mouse or keyboard activity."""
+        if event.type() in (
+            QEvent.MouseMove,
+            QEvent.MouseButtonPress,
+            QEvent.KeyPress,
+        ):
+            self._idle_seconds = 0
+        return super().eventFilter(obj, event)
+
+    def _auto_lock(self) -> None:
+        """Lock the app and require re-authentication."""
+        log.info("Auto-lock triggered.")
+        try:
+            self.audit.log(
+                self.current_user,
+                self.current_role,
+                "AUTO_LOCK",
+                "Idle timeout.",
+            )
+        except Exception:
+            log.exception("Audit on auto-lock failed.")
+
+        try:
+            self.db.close()
+        except Exception:
+            log.exception("DB close on auto-lock failed.")
+
+        self.hide()
+
+        login = LoginDialog(self.db_path, parent=self)
+        if login.exec_() != LoginDialog.Accepted or not login.username:
+            QApplication.quit()
+            return
+
+        # Re-open DB with the same Database instance
+        self.db.open()
+        self.audit = AuditTrail(self.db)
+        self.tab_database._audit = self.audit  # rebind reference
+
+        # Update user/role
+        self.current_user = login.username
+        self.current_role = login.role or "Junior Analyst"
+        self.setWindowTitle(
+            f"CDR Forensic System — {self.current_user} "
+            f"[{self.current_role}]"
+        )
+
+        self.audit.log(
+            self.current_user,
+            self.current_role,
+            "UNLOCK",
+            "Session resumed after auto-lock.",
+        )
+
+        self._idle_seconds = 0
+        self.show()
+
+    # ============================================================
+    # KEYBOARD SHORTCUTS
+    # ============================================================
+
+    def _install_shortcuts(self) -> None:
+        QShortcut(
+            QKeySequence("Ctrl+O"), self,
+            activated=self._on_load_single,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+Shift+O"), self,
+            activated=self._on_load_bulk,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+B"), self,
+            activated=self._on_load_target_b,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+L"), self,
+            activated=self._auto_lock,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+/"), self,
+            activated=self._on_toggle_theme,
+        )
+        QShortcut(
+            QKeySequence("Ctrl+R"), self,
+            activated=self._refresh_all,
+        )
+
+    # ============================================================
     # LIFECYCLE
     # ============================================================
 
     def closeEvent(self, event) -> None:
+        # Stop the idle timer
+        if hasattr(self, "_idle_timer"):
+            self._idle_timer.stop()
+
         try:
             self.audit.log(
                 self.current_user,
