@@ -1,0 +1,23 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# PyCharm
+.idea/
+
+# Python cache
+_pycache_/
+*.py[cod]
+
+# Database & encryption artifacts
+*.db
+*.db.enc
+*.key
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
