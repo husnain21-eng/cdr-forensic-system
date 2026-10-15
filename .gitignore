@@ -12,7 +12,7 @@ _pycache_/
 
 # Database & encryption artifacts
 *.db
-*.db.enc
+*.enc
 *.key
 
 # Logs
