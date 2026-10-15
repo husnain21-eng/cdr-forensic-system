@@ -16,6 +16,9 @@ SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 SHORT_CALL_THRESHOLD_SEC = 5
 NIGHT_HOURS = (23, 0, 1, 2, 3, 4, 5)
 
+# --- Geo / Co-location ---
+COLOCATION_TIME_WINDOW_SEC = 300      # 5 minutes
+COLOCATION_DISTANCE_DEG = 0.002       # ~200 meters
 # --- Roles ---
 ROLE_ADMIN = "Senior Investigator / Admin"
 ROLE_ANALYST = "Junior Analyst"
