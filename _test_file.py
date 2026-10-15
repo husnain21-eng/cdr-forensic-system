@@ -1,9 +1,12 @@
-"""Temporary test for ErrorDialog. Delete after verifying."""
+"""Temporary test for DashboardTab. Delete after verifying."""
 import sys
 
-from PyQt5.QtWidgets import QApplication, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget
 
-from ui.dialogs.error_dialog import show_error
+from data.analyzer.anomalies import summary
+from data.analyzer.risk import compute_risk
+from data.loader import load_single_file
+from ui.tabs.dashboard_tab import DashboardTab
 from ui.theme.palette import LIGHT
 from ui.theme.stylesheet import stylesheet
 
@@ -11,57 +14,31 @@ from ui.theme.stylesheet import stylesheet
 class Demo(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Error dialog test")
-        self.resize(600, 400)
+        self.setWindowTitle("Dashboard tab test")
+        self.resize(1100, 600)
         self.setStyleSheet(stylesheet(LIGHT))
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.addWidget(QLabel("  Click a button to see the error dialog:"))
+        self.dashboard = DashboardTab()
+        layout.addWidget(self.dashboard, 1)
 
-        # Test 1: Simple error with no traceback
-        b1 = QPushButton("Test 1: Simple message")
-        b1.clicked.connect(lambda: show_error(
-            self,
-            "Load failed",
-            "The CDR file could not be parsed.",
-        ))
+        btn = QPushButton("Load sample_cdr.csv → update dashboard")
+        btn.clicked.connect(self._load)
+        layout.addWidget(btn)
 
-        # Test 2: Real exception with traceback
-        def raise_something():
-            try:
-                _ = 1 / 0
-            except ZeroDivisionError as e:
-                show_error(
-                    self,
-                    "Calculation error",
-                    "An unexpected error occurred during analysis.",
-                    exception=e,
-                )
+        btn_clear = QPushButton("Clear → show empty state")
+        btn_clear.clicked.connect(self.dashboard.clear)
+        layout.addWidget(btn_clear)
 
-        b2 = QPushButton("Test 2: Exception with traceback")
-        b2.clicked.connect(raise_something)
-
-        # Test 3: Custom details
-        b3 = QPushButton("Test 3: Custom long details")
-        b3.clicked.connect(lambda: show_error(
-            self,
-            "Import failure",
-            "The import could not complete.",
-            details=(
-                "Row 42: missing 'party_b' column\n"
-                "Row 58: invalid timestamp format\n"
-                "Row 103: empty caller field\n" * 5
-            ),
-        ))
-
-        layout.addWidget(b1)
-        layout.addWidget(b2)
-        layout.addWidget(b3)
-        layout.addStretch()
+    def _load(self):
+        df = load_single_file("sample_cdr.csv")
+        risk = compute_risk(df)
+        anoms = summary(df)
+        self.dashboard.update_data(df, risk, anoms)
 
 
 app = QApplication(sys.argv)
