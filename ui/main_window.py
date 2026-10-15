@@ -12,9 +12,11 @@ from pathlib import Path
 
 import pandas as pd
 from PyQt5.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -22,8 +24,15 @@ from PyQt5.QtWidgets import (
 
 from core.audit import AuditTrail
 from core.database import Database
+from data.analyzer.anomalies import night_calls, short_calls, summary
+from data.analyzer.colocation import colocation_events
+from data.analyzer.graph import build_call_graph, centrality_table
+from data.analyzer.mutual import mutual_contacts
+from data.analyzer.risk import compute_risk
+from data.loader import load_single_file
 from ui.components.sidebar import Sidebar
 from ui.components.toolbar import TopToolbar
+from ui.components.toast import toast
 from ui.tabs.anomalies_tab import AnomaliesTab
 from ui.tabs.dashboard_tab import DashboardTab
 from ui.tabs.database_tab import DatabaseTab
@@ -35,7 +44,7 @@ from ui.tabs.report_tab import ReportTab
 log = logging.getLogger(__name__)
 
 
-# Sidebar items: (icon, label)  — order matches the stack order
+# Sidebar items: (icon, label) — order matches the stack order
 NAV_ITEMS = [
     ("◉", "Dashboard"),
     ("⬡", "Network"),
@@ -76,7 +85,9 @@ class MainWindow(QMainWindow):
             "Session started.",
         )
 
-    # ---------- UI construction ----------
+    # ============================================================
+    # UI CONSTRUCTION
+    # ============================================================
 
     def _build_ui(self) -> None:
         self.setWindowTitle(
@@ -119,6 +130,9 @@ class MainWindow(QMainWindow):
         # 4. Wire sidebar → stack
         self.sidebar.changed.connect(self.stack.setCurrentIndex)
 
+        # 5. Wire toolbar signals
+        self._wire_toolbar()
+
     def _build_tabs(self) -> None:
         """Instantiate every tab and add it to the stack."""
         self.tab_dashboard = DashboardTab()
@@ -152,7 +166,180 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.user_label)
         sb.addPermanentWidget(self.lock_label)
 
-    # ---------- lifecycle ----------
+    # ============================================================
+    # TOOLBAR WIRING
+    # ============================================================
+
+    def _wire_toolbar(self) -> None:
+        self.toolbar.load_single.connect(self._on_load_single)
+        self.toolbar.load_bulk.connect(self._on_load_bulk)
+        self.toolbar.load_target_b.connect(self._on_load_target_b)
+        self.toolbar.search_changed.connect(self._on_search_changed)
+        # Note: toggle_theme and open_filters are wired in Step 55
+
+    # ============================================================
+    # FILE LOADING
+    # ============================================================
+
+    def _on_load_single(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open CDR file",
+            "",
+            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+        )
+        if not path:
+            return
+        self._load_into_slot(path, target="A")
+
+    def _on_load_bulk(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Open multiple CDR files",
+            "",
+            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+        )
+        if not paths:
+            return
+        self._load_bulk(paths)
+
+    def _on_load_target_b(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Target B CDR",
+            "",
+            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+        )
+        if not path:
+            return
+        self._load_into_slot(path, target="B")
+
+    def _load_into_slot(self, path: str, target: str) -> None:
+        """Load a single file into slot A or B."""
+        try:
+            df = load_single_file(path)
+        except Exception as e:
+            log.exception("Load failed.")
+            QMessageBox.critical(self, "Load failed", str(e))
+            return
+
+        if target == "A":
+            self.df_a = df
+        else:
+            self.df_b = df
+
+        label = f"Target {target}: {len(df):,} records"
+        self.audit.log(
+            self.current_user,
+            self.current_role,
+            f"LOAD_{target}",
+            f"{label} from {path}",
+        )
+        toast(self, label + " loaded", tone="success")
+        self.status_label.setText(label)
+        self._refresh_all()
+
+    def _load_bulk(self, paths: list[str]) -> None:
+        """Load and concatenate multiple files into slot A."""
+        frames = []
+        errors = []
+        for p in paths:
+            try:
+                frames.append(load_single_file(p))
+            except Exception as e:
+                errors.append(f"{p}: {e}")
+
+        if not frames:
+            QMessageBox.critical(
+                self,
+                "Bulk load failed",
+                "None of the files could be loaded.\n\n" + "\n".join(errors),
+            )
+            return
+
+        combined = pd.concat(frames, ignore_index=True)
+        combined = combined.loc[:, ~combined.columns.duplicated()]
+        combined.reset_index(drop=True, inplace=True)
+
+        self.df_a = combined
+        label = f"Bulk: {len(paths)} files, {len(combined):,} records"
+        self.audit.log(
+            self.current_user,
+            self.current_role,
+            "LOAD_BULK",
+            label,
+        )
+        toast(self, label + " loaded", tone="success")
+        self.status_label.setText(label)
+        self._refresh_all()
+
+    # ============================================================
+    # SEARCH
+    # ============================================================
+
+    def _on_search_changed(self, text: str) -> None:
+        """Live-filter the inspector tab."""
+        if hasattr(self, "tab_inspector"):
+            self.tab_inspector.txt_search.setText(text)
+
+    # ============================================================
+    # REFRESH PIPELINE
+    # ============================================================
+
+    def _refresh_all(self) -> None:
+        """Compute every analysis and push results into tabs."""
+        if self.df_a.empty:
+            self.status_label.setText("No dataset loaded.")
+            return
+
+        df = self.df_a
+
+        try:
+            # Graph analysis
+            g = build_call_graph(df)
+            centrality = centrality_table(g)
+
+            # Mutual contacts (only if Target B loaded)
+            mutual = (
+                mutual_contacts(df, self.df_b)
+                if not self.df_b.empty
+                else None
+            )
+
+            # Risk & anomalies
+            risk = compute_risk(df)
+            anom_summary = summary(df)
+            short = short_calls(df)
+            night = night_calls(df)
+
+            # Co-location (only if both targets loaded)
+            colocations = (
+                colocation_events(df, self.df_b)
+                if not self.df_b.empty
+                else None
+            )
+
+            # Push to tabs
+            self.tab_dashboard.update_data(df, risk, anom_summary)
+            self.tab_network.update_data(g, centrality, mutual)
+            self.tab_map.update_data(df)
+            self.tab_anomalies.update_data(short, night, anom_summary)
+            self.tab_report.update_data(df, risk)
+            self.tab_inspector.update_data(df)
+            self.tab_database.refresh()
+
+            # Status
+            self.status_label.setText(
+                f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})"
+            )
+
+        except Exception as e:
+            log.exception("Refresh pipeline failed.")
+            QMessageBox.critical(self, "Analysis error", str(e))
+
+    # ============================================================
+    # LIFECYCLE
+    # ============================================================
 
     def closeEvent(self, event) -> None:
         try:
