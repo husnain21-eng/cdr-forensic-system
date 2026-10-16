@@ -67,7 +67,7 @@ class InspectorTab(QWidget):
         self.txt_search.textChanged.connect(self._apply_filter)
 
         self.lbl_count = QLabel("")
-        self.lbl_count.setStyleSheet("color: #6B7280; font-size: 12px;")
+        self.lbl_count.setStyleSheet("color: #6B7280; font-size: 14px;")
 
         search_row.addWidget(self.txt_search, 1)
         search_row.addWidget(self.lbl_count)

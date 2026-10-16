@@ -1,7 +1,6 @@
 """Master QSS generator for the application.
 
-Takes a Palette and returns a complete Qt stylesheet string.
-Supports both light and dark themes without duplicating rules.
+Supports both light and dark themes and user-controlled font size.
 """
 from __future__ import annotations
 
@@ -9,36 +8,45 @@ from ui.theme.palette import Palette
 from ui.theme.spacing import RADIUS, RADIUS_SM
 
 
-def stylesheet(p: Palette) -> str:
+def stylesheet(p: Palette, font_size: int = 14) -> str:
+    fs = font_size
+    header_fs = max(fs - 1, 10)
+    small_fs = max(fs - 2, 10)
+
     return f"""
     * {{
         font-family: 'Segoe UI', 'Inter', -apple-system, sans-serif;
         outline: none;
     }}
     QMainWindow, QDialog {{ background: {p.bg}; color: {p.text}; }}
-    QWidget {{ color: {p.text}; font-size: 13px; }}
+    QWidget {{ color: {p.text}; font-size: {fs}px; }}
 
-    /* ---------- Sidebar ---------- */
-    QFrame#Sidebar {{
-        background: {p.surface};
-        border-right: 1px solid {p.border};
-    }}
-    QPushButton#NavItem {{
-        text-align: left;
-        padding: 10px 14px;
+    /* ---------- Tab bar ---------- */
+    QTabWidget::pane {{
         border: none;
-        border-radius: {RADIUS}px;
-        color: {p.text_muted};
-        font-weight: 500;
-        background: transparent;
+        background: {p.bg};
     }}
-    QPushButton#NavItem:hover {{
+    QTabBar {{
+        background: {p.surface};
+        qproperty-drawBase: 0;
+    }}
+    QTabBar::tab {{
+        background: {p.surface};
+        color: {p.text_muted};
+        padding: 10px 18px;
+        margin-right: 2px;
+        border: none;
+        border-bottom: 2px solid transparent;
+        font-size: {fs}px;
+        font-weight: 500;
+    }}
+    QTabBar::tab:hover {{
         background: {p.surface_alt};
         color: {p.text};
     }}
-    QPushButton#NavItem:checked {{
-        background: {p.primary};
-        color: {p.primary_text};
+    QTabBar::tab:selected {{
+        color: {p.primary};
+        border-bottom: 2px solid {p.primary};
         font-weight: 600;
     }}
 
@@ -50,6 +58,7 @@ def stylesheet(p: Palette) -> str:
         border-radius: {RADIUS}px;
         padding: 8px 14px;
         font-weight: 500;
+        font-size: {fs}px;
     }}
     QPushButton:hover {{ background: {p.border}; }}
     QPushButton:disabled {{ color: {p.text_muted}; background: {p.surface_alt}; }}
@@ -67,6 +76,19 @@ def stylesheet(p: Palette) -> str:
         border: none;
     }}
 
+    QToolButton {{
+        background: transparent;
+        color: {p.text};
+        border: 1px solid transparent;
+        border-radius: {RADIUS_SM}px;
+        padding: 6px 10px;
+        font-size: {fs}px;
+    }}
+    QToolButton:hover {{
+        background: {p.surface_alt};
+        border: 1px solid {p.border};
+    }}
+
     /* ---------- Inputs ---------- */
     QLineEdit, QComboBox, QDateTimeEdit, QSpinBox, QDoubleSpinBox {{
         background: {p.surface};
@@ -74,6 +96,7 @@ def stylesheet(p: Palette) -> str:
         border-radius: {RADIUS_SM}px;
         padding: 8px 10px;
         selection-background-color: {p.primary};
+        font-size: {fs}px;
     }}
     QLineEdit:focus, QComboBox:focus, QDateTimeEdit:focus {{
         border: 1px solid {p.primary};
@@ -88,6 +111,7 @@ def stylesheet(p: Palette) -> str:
         border-radius: {RADIUS}px;
         selection-background-color: {p.primary};
         selection-color: {p.primary_text};
+        font-size: {fs}px;
     }}
     QHeaderView::section {{
         background: {p.surface_alt};
@@ -96,7 +120,7 @@ def stylesheet(p: Palette) -> str:
         border: none;
         border-bottom: 1px solid {p.border};
         font-weight: 600;
-        font-size: 12px;
+        font-size: {header_fs}px;
     }}
 
     /* ---------- Group box ---------- */
@@ -107,21 +131,30 @@ def stylesheet(p: Palette) -> str:
         margin-top: 14px;
         padding: 14px;
         font-weight: 600;
+        font-size: {fs}px;
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 12px;
         padding: 0 6px;
         color: {p.text_muted};
-        font-size: 11px;
+        font-size: {small_fs}px;
+    }}
+
+    QCheckBox {{
+        font-size: {fs}px;
+    }}
+
+    QLabel {{
+        font-size: {fs}px;
     }}
 
     /* ---------- Scrollbars ---------- */
     QScrollBar:vertical {{
-        background: transparent; width: 10px; margin: 4px;
+        background: transparent; width: 12px; margin: 4px;
     }}
     QScrollBar::handle:vertical {{
-        background: {p.border}; border-radius: 5px; min-height: 24px;
+        background: {p.border}; border-radius: 6px; min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
     QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
@@ -131,5 +164,6 @@ def stylesheet(p: Palette) -> str:
         background: {p.surface};
         color: {p.text_muted};
         border-top: 1px solid {p.border};
+        font-size: {small_fs}px;
     }}
     """

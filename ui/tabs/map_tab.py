@@ -83,7 +83,7 @@ class MapTab(QWidget):
             "Click <b>Launch Intelligence Map</b> to open an interactive map "
             "in your browser."
         )
-        self.lbl_hint.setStyleSheet("color: #6B7280; font-size: 12px;")
+        self.lbl_hint.setStyleSheet("color: #6B7280; font-size: 14px;")
 
         self.btn_launch = QPushButton("🗺️  Launch Intelligence Map")
         self.btn_launch.setProperty("role", "primary")

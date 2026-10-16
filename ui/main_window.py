@@ -1,45 +1,39 @@
-"""Main application window — wires everything together.
-
-The window is the only component that:
-  - Holds a Database and AuditTrail
-  - Holds the currently loaded DataFrames (df_a, df_b)
-  - Calls analyzers and pushes results into tabs
-  - Manages idle auto-lock, theme toggle, and keyboard shortcuts
-"""
+"""Main application window — wires everything together."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
 import pandas as pd
-from PyQt5.QtCore import QEvent, QTimer
+from PyQt5.QtCore import QEvent, QTimer, Qt
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QShortcut,
-    QStackedWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from core import settings as user_settings
 from core.audit import AuditTrail
 from core.constants import IDLE_TIMEOUT_SECONDS
 from core.database import Database
+from core.settings import MAX_FONT_SIZE, MIN_FONT_SIZE
 from data.analyzer.anomalies import night_calls, short_calls, summary
 from data.analyzer.colocation import colocation_events
 from data.analyzer.graph import build_call_graph, centrality_table
 from data.analyzer.mutual import mutual_contacts
 from data.analyzer.risk import compute_risk
 from data.loader import load_single_file
-from ui.components.sidebar import Sidebar
+from maps.folium_builder import build_map as build_folium_map
 from ui.components.toolbar import TopToolbar
 from ui.components.toast import toast
-from ui.dialogs.login_dialog import LoginDialog
 from ui.tabs.anomalies_tab import AnomaliesTab
 from ui.tabs.dashboard_tab import DashboardTab
 from ui.tabs.database_tab import DatabaseTab
@@ -53,52 +47,44 @@ from ui.theme.stylesheet import stylesheet
 log = logging.getLogger(__name__)
 
 
-# Sidebar items: (icon, label) — order matches the stack order
-NAV_ITEMS = [
-    ("◉", "Dashboard"),
-    ("⬡", "Network"),
-    ("◐", "Geo Map"),
-    ("⚠", "Anomalies"),
-    ("▤", "Database"),
-    ("⎙", "Reports"),
-    ("≣", "Raw Logs"),
+TAB_ITEMS = [
+    "◉  Dashboard",
+    "⬡  Network",
+    "◐  Geo Map",
+    "⚠  Anomalies",
+    "▤  Database",
+    "⎙  Reports",
+    "≣  Raw Logs",
 ]
 
 
 class MainWindow(QMainWindow):
     """Top-level window."""
 
-    def __init__(self, db_path: str | Path, username: str, role: str):
+    def __init__(self, db_path, username, role):
         super().__init__()
         self.db_path = Path(db_path)
         self.current_user = username
         self.current_role = role
 
-        # Backend
         self.db = Database(self.db_path)
         self.db.open()
         self.audit = AuditTrail(self.db)
 
-        # Session state
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
 
-        # Theme + idle state
         self._theme_is_dark = False
         self._idle_seconds = 0
+        self._font_size = user_settings.get("font_size", 14)
 
-        # Build UI
         self._build_ui()
 
-        # Log the session start
         self.audit.log(
-            self.current_user,
-            self.current_role,
-            "LOGIN",
-            "Session started.",
+            self.current_user, self.current_role,
+            "LOGIN", "Session started.",
         )
 
-        # Install idle watcher + keyboard shortcuts
         self._install_idle_watch()
         self._install_shortcuts()
 
@@ -108,10 +94,10 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.setWindowTitle(
-            f"CDR Forensic System — {self.current_user} "
-            f"[{self.current_role}]"
+            f"CDR Forensic System — {self.current_user} [{self.current_role}]"
         )
         self.resize(1400, 880)
+        self.setMinimumSize(1000, 640)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -120,41 +106,22 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # 1. Toolbar
         self.toolbar = TopToolbar(
             username=self.current_user,
             role=self.current_role,
         )
         root.addWidget(self.toolbar)
 
-        # 2. Sidebar + content stack
-        middle = QHBoxLayout()
-        middle.setContentsMargins(0, 0, 0, 0)
-        middle.setSpacing(0)
-
-        self.sidebar = Sidebar(NAV_ITEMS)
-        middle.addWidget(self.sidebar)
-
-        self.stack = QStackedWidget()
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self._build_tabs()
-        middle.addWidget(self.stack, 1)
+        root.addWidget(self.tabs, 1)
 
-        root.addLayout(middle, 1)
-
-        # 3. Status bar
         self._build_status_bar()
-
-        # 4. Wire sidebar → stack
-        self.sidebar.changed.connect(self.stack.setCurrentIndex)
-
-        # 5. Wire toolbar signals
         self._wire_toolbar()
-
-        # 6. Apply theme
         self._apply_theme()
 
     def _build_tabs(self) -> None:
-        """Instantiate every tab and add it to the stack."""
         self.tab_dashboard = DashboardTab()
         self.tab_network = NetworkTab()
         self.tab_map = MapTab()
@@ -163,19 +130,31 @@ class MainWindow(QMainWindow):
         self.tab_report = ReportTab()
         self.tab_inspector = InspectorTab()
 
-        # Order MUST match NAV_ITEMS
-        self.stack.addWidget(self.tab_dashboard)
-        self.stack.addWidget(self.tab_network)
-        self.stack.addWidget(self.tab_map)
-        self.stack.addWidget(self.tab_anomalies)
-        self.stack.addWidget(self.tab_database)
-        self.stack.addWidget(self.tab_report)
-        self.stack.addWidget(self.tab_inspector)
+        for label, tab in zip(TAB_ITEMS, [
+            self.tab_dashboard, self.tab_network, self.tab_map,
+            self.tab_anomalies, self.tab_database, self.tab_report,
+            self.tab_inspector,
+        ]):
+            self.tabs.addTab(tab, label)
+
+        # ---- Connect the map tab's signal (was orphaned before) ----
+        self.tab_map.launch_map_requested.connect(self._on_launch_map)
+        self.tab_report.export_pdf_requested.connect(self._on_export_pdf)
+        self.tab_map.launch_map_requested.connect(self._on_launch_map)
+        self.tab_report.export_pdf_requested.connect(self._on_export_pdf)
 
     def _build_status_bar(self) -> None:
         sb = self.statusBar()
 
         self.status_label = QLabel("Ready.")
+
+        # Progress bar (hidden until a load starts)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(220)
+        self.progress_bar.setMaximumHeight(16)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+
         self.user_label = QLabel(
             f"◉  {self.current_user} · {self.current_role}"
         )
@@ -183,8 +162,31 @@ class MainWindow(QMainWindow):
         self.lock_label.setStyleSheet("color: #6B7280;")
 
         sb.addWidget(self.status_label, 1)
+        sb.addPermanentWidget(self.progress_bar)
         sb.addPermanentWidget(self.user_label)
         sb.addPermanentWidget(self.lock_label)
+
+    # ============================================================
+    # PROGRESS HELPERS
+    # ============================================================
+
+    def _show_progress(self, label: str, maximum: int = 0) -> None:
+        """Show the progress bar. maximum=0 means indeterminate."""
+        self.status_label.setText(label)
+        self.progress_bar.setRange(0, maximum)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        QApplication.processEvents()
+
+    def _update_progress(self, value: int, label: str | None = None) -> None:
+        self.progress_bar.setValue(value)
+        if label:
+            self.status_label.setText(label)
+        QApplication.processEvents()
+
+    def _hide_progress(self) -> None:
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 0)
 
     # ============================================================
     # TOOLBAR WIRING
@@ -196,6 +198,8 @@ class MainWindow(QMainWindow):
         self.toolbar.load_target_b.connect(self._on_load_target_b)
         self.toolbar.search_changed.connect(self._on_search_changed)
         self.toolbar.toggle_theme.connect(self._on_toggle_theme)
+        self.toolbar.font_increase.connect(self._on_font_increase)
+        self.toolbar.font_decrease.connect(self._on_font_decrease)
 
     # ============================================================
     # FILE LOADING
@@ -203,9 +207,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_single(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open CDR file",
-            "",
+            self, "Open CDR file", "",
             "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
         )
         if not path:
@@ -214,9 +216,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_bulk(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Open multiple CDR files",
-            "",
+            self, "Open multiple CDR files", "",
             "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
         )
         if not paths:
@@ -225,23 +225,26 @@ class MainWindow(QMainWindow):
 
     def _on_load_target_b(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Target B CDR",
-            "",
+            self, "Open Target B CDR", "",
             "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
         )
         if not path:
             return
         self._load_into_slot(path, target="B")
 
-    def _load_into_slot(self, path: str, target: str) -> None:
-        """Load a single file into slot A or B."""
+    def _load_into_slot(self, path, target) -> None:
+        self._show_progress(
+            f"Loading {Path(path).name}…", maximum=0
+        )
         try:
             df = load_single_file(path)
         except Exception as e:
+            self._hide_progress()
             log.exception("Load failed.")
             QMessageBox.critical(self, "Load failed", str(e))
             return
+
+        self._hide_progress()
 
         if target == "A":
             self.df_a = df
@@ -250,55 +253,159 @@ class MainWindow(QMainWindow):
 
         label = f"Target {target}: {len(df):,} records"
         self.audit.log(
-            self.current_user,
-            self.current_role,
-            f"LOAD_{target}",
-            f"{label} from {path}",
+            self.current_user, self.current_role,
+            f"LOAD_{target}", f"{label} from {path}",
         )
         toast(self, label + " loaded", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
 
-    def _load_bulk(self, paths: list[str]) -> None:
-        """Load and concatenate multiple files into slot A."""
+    def _load_bulk(self, paths) -> None:
+        total = len(paths)
+        self._show_progress(f"Loading 0 of {total} files…", maximum=total)
+
         frames = []
         errors = []
-        for p in paths:
+        for i, p in enumerate(paths, start=1):
+            self._update_progress(
+                i, f"Loading {i} of {total}: {Path(p).name}"
+            )
             try:
                 frames.append(load_single_file(p))
             except Exception as e:
                 errors.append(f"{p}: {e}")
 
         if not frames:
+            self._hide_progress()
             QMessageBox.critical(
-                self,
-                "Bulk load failed",
+                self, "Bulk load failed",
                 "None of the files could be loaded.\n\n" + "\n".join(errors),
             )
             return
+
+        # Combining step
+        self._update_progress(total, "Combining files…")
 
         combined = pd.concat(frames, ignore_index=True)
         combined = combined.loc[:, ~combined.columns.duplicated()]
         combined.reset_index(drop=True, inplace=True)
 
+        self._hide_progress()
+
         self.df_a = combined
-        label = f"Bulk: {len(paths)} files, {len(combined):,} records"
+        label = f"Bulk: {total} files, {len(combined):,} records"
         self.audit.log(
-            self.current_user,
-            self.current_role,
-            "LOAD_BULK",
-            label,
+            self.current_user, self.current_role,
+            "LOAD_BULK", label,
         )
         toast(self, label + " loaded", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
 
     # ============================================================
+    # MAP LAUNCH (fixes the previously orphaned signal)
+    # ============================================================
+
+    def _on_launch_map(self) -> None:
+        if self.df_a.empty:
+            QMessageBox.warning(
+                self, "No data",
+                "Load a CDR file first.",
+            )
+            return
+
+        self._show_progress("Generating map…", maximum=0)
+        try:
+            colocations = None
+            if not self.df_b.empty:
+                colocations = colocation_events(self.df_a, self.df_b)
+
+            out = build_folium_map(
+                self.df_a,
+                self.df_b if not self.df_b.empty else None,
+                colocations,
+                show_heatmap=self.tab_map.heatmap_enabled(),
+                show_triangulation=self.tab_map.triangulation_enabled(),
+            )
+            self._hide_progress()
+
+            self.audit.log(
+                self.current_user, self.current_role,
+                "OPEN_MAP", f"Map opened: {out}",
+            )
+            toast(self, "Map opened in browser", tone="success")
+
+        except ValueError as e:
+            self._hide_progress()
+            QMessageBox.warning(self, "No coordinates", str(e))
+        except Exception as e:
+            self._hide_progress()
+            log.exception("Map generation failed.")
+            QMessageBox.critical(self, "Map error", str(e))
+
+    # ============================================================
+    # PDF EXPORT (bonus — wires the report tab's signal too)
+    # ============================================================
+
+    def _on_export_pdf(self) -> None:
+        if self.df_a.empty:
+            QMessageBox.warning(self, "No data", "Load a CDR file first.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF dossier", "dossier.pdf", "PDF Files (*.pdf)"
+        )
+        if not path:
+            return
+
+        self._show_progress("Generating PDF…", maximum=0)
+        try:
+            from reports.pdf_builder import build_dossier
+
+            df = self.df_a
+            risk = compute_risk(df)
+
+            top = (
+                df["party_b"].dropna().astype(str)
+                .value_counts().head(20)
+                if "party_b" in df.columns else pd.Series(dtype=int)
+            )
+            towers = (
+                df["cell_id"].dropna().astype(str)
+                .value_counts().head(20)
+                if "cell_id" in df.columns else pd.Series(dtype=int)
+            )
+
+            build_dossier(
+                path=Path(path),
+                investigator=self.current_user,
+                role=self.current_role,
+                case_id="N/A",
+                risk_score=risk.score,
+                risk_level=risk.level,
+                risk_rationale=risk.rationale,
+                total_records=len(df),
+                top_contacts=list(top.items()),
+                towers=list(towers.items()),
+            )
+            self._hide_progress()
+
+            self.audit.log(
+                self.current_user, self.current_role,
+                "EXPORT_PDF", str(path),
+            )
+            toast(self, "PDF saved", tone="success")
+
+        except Exception as e:
+            self._hide_progress()
+            log.exception("PDF export failed.")
+            QMessageBox.critical(self, "Export failed", str(e))
+
+    # ============================================================
     # SEARCH
     # ============================================================
 
     def _on_search_changed(self, text: str) -> None:
-        """Live-filter the inspector tab."""
         if hasattr(self, "tab_inspector"):
             self.tab_inspector.txt_search.setText(text)
 
@@ -307,7 +414,6 @@ class MainWindow(QMainWindow):
     # ============================================================
 
     def _refresh_all(self) -> None:
-        """Compute every analysis and push results into tabs."""
         if self.df_a.empty:
             self.status_label.setText("No dataset loaded.")
             return
@@ -315,31 +421,18 @@ class MainWindow(QMainWindow):
         df = self.df_a
 
         try:
-            # Graph analysis
             g = build_call_graph(df)
             centrality = centrality_table(g)
 
-            # Mutual contacts (only if Target B loaded)
             mutual = (
                 mutual_contacts(df, self.df_b)
-                if not self.df_b.empty
-                else None
+                if not self.df_b.empty else None
             )
-
-            # Risk & anomalies
             risk = compute_risk(df)
             anom_summary = summary(df)
             short = short_calls(df)
             night = night_calls(df)
 
-            # Co-location (only if both targets loaded)
-            colocations = (
-                colocation_events(df, self.df_b)
-                if not self.df_b.empty
-                else None
-            )
-
-            # Push to tabs
             self.tab_dashboard.update_data(df, risk, anom_summary)
             self.tab_network.update_data(g, centrality, mutual)
             self.tab_map.update_data(df)
@@ -348,7 +441,6 @@ class MainWindow(QMainWindow):
             self.tab_inspector.update_data(df)
             self.tab_database.refresh()
 
-            # Status
             self.status_label.setText(
                 f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})"
             )
@@ -358,15 +450,30 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Analysis error", str(e))
 
     # ============================================================
-    # THEME
+    # THEME + FONT
     # ============================================================
 
     def _apply_theme(self) -> None:
         palette = DARK if self._theme_is_dark else LIGHT
-        self.setStyleSheet(stylesheet(palette))
+        self.setStyleSheet(stylesheet(palette, font_size=self._font_size))
 
     def _on_toggle_theme(self) -> None:
         self._theme_is_dark = not self._theme_is_dark
+        self._apply_theme()
+
+    def _on_font_increase(self) -> None:
+        self._change_font(+1)
+
+    def _on_font_decrease(self) -> None:
+        self._change_font(-1)
+
+    def _change_font(self, delta: int) -> None:
+        new_size = self._font_size + delta
+        new_size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, new_size))
+        if new_size == self._font_size:
+            return
+        self._font_size = new_size
+        user_settings.set_value("font_size", new_size)
         self._apply_theme()
 
     # ============================================================
@@ -375,11 +482,9 @@ class MainWindow(QMainWindow):
 
     def _install_idle_watch(self) -> None:
         self._idle_timer = QTimer(self)
-        self._idle_timer.setInterval(1000)  # tick every second
+        self._idle_timer.setInterval(1000)
         self._idle_timer.timeout.connect(self._tick_idle)
         self._idle_timer.start()
-
-        # Hook into global events so we can reset the counter
         QApplication.instance().installEventFilter(self)
 
     def _tick_idle(self) -> None:
@@ -392,24 +497,18 @@ class MainWindow(QMainWindow):
             self._auto_lock()
 
     def eventFilter(self, obj, event) -> bool:
-        """Reset idle counter on any mouse or keyboard activity."""
         if event.type() in (
-            QEvent.MouseMove,
-            QEvent.MouseButtonPress,
-            QEvent.KeyPress,
+            QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress,
         ):
             self._idle_seconds = 0
         return super().eventFilter(obj, event)
 
     def _auto_lock(self) -> None:
-        """Lock the app and require re-authentication."""
         log.info("Auto-lock triggered.")
         try:
             self.audit.log(
-                self.current_user,
-                self.current_role,
-                "AUTO_LOCK",
-                "Idle timeout.",
+                self.current_user, self.current_role,
+                "AUTO_LOCK", "Idle timeout.",
             )
         except Exception:
             log.exception("Audit on auto-lock failed.")
@@ -421,31 +520,24 @@ class MainWindow(QMainWindow):
 
         self.hide()
 
+        from ui.dialogs.login_dialog import LoginDialog
         login = LoginDialog(self.db_path, parent=self)
         if login.exec_() != LoginDialog.Accepted or not login.username:
             QApplication.quit()
             return
 
-        # Re-open DB with the same Database instance
         self.db.open()
         self.audit = AuditTrail(self.db)
-        self.tab_database._audit = self.audit  # rebind reference
-
-        # Update user/role
+        self.tab_database._audit = self.audit
         self.current_user = login.username
         self.current_role = login.role or "Junior Analyst"
         self.setWindowTitle(
-            f"CDR Forensic System — {self.current_user} "
-            f"[{self.current_role}]"
+            f"CDR Forensic System — {self.current_user} [{self.current_role}]"
         )
-
         self.audit.log(
-            self.current_user,
-            self.current_role,
-            "UNLOCK",
-            "Session resumed after auto-lock.",
+            self.current_user, self.current_role,
+            "UNLOCK", "Session resumed after auto-lock.",
         )
-
         self._idle_seconds = 0
         self.show()
 
@@ -454,53 +546,31 @@ class MainWindow(QMainWindow):
     # ============================================================
 
     def _install_shortcuts(self) -> None:
-        QShortcut(
-            QKeySequence("Ctrl+O"), self,
-            activated=self._on_load_single,
-        )
-        QShortcut(
-            QKeySequence("Ctrl+Shift+O"), self,
-            activated=self._on_load_bulk,
-        )
-        QShortcut(
-            QKeySequence("Ctrl+B"), self,
-            activated=self._on_load_target_b,
-        )
-        QShortcut(
-            QKeySequence("Ctrl+L"), self,
-            activated=self._auto_lock,
-        )
-        QShortcut(
-            QKeySequence("Ctrl+/"), self,
-            activated=self._on_toggle_theme,
-        )
-        QShortcut(
-            QKeySequence("Ctrl+R"), self,
-            activated=self._refresh_all,
-        )
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self._on_load_single)
+        QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self._on_load_bulk)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self._on_load_target_b)
+        QShortcut(QKeySequence("Ctrl+L"), self, activated=self._auto_lock)
+        QShortcut(QKeySequence("Ctrl+/"), self, activated=self._on_toggle_theme)
+        QShortcut(QKeySequence("Ctrl+R"), self, activated=self._refresh_all)
+        QShortcut(QKeySequence("Ctrl+="), self, activated=self._on_font_increase)
+        QShortcut(QKeySequence("Ctrl+-"), self, activated=self._on_font_decrease)
 
     # ============================================================
     # LIFECYCLE
     # ============================================================
 
     def closeEvent(self, event) -> None:
-        # Stop the idle timer
         if hasattr(self, "_idle_timer"):
             self._idle_timer.stop()
-
         try:
             self.audit.log(
-                self.current_user,
-                self.current_role,
-                "LOGOUT",
-                "Session ended.",
+                self.current_user, self.current_role,
+                "LOGOUT", "Session ended.",
             )
         except Exception:
             log.exception("Audit on close failed.")
-
         try:
             self.db.close()
         except Exception:
             log.exception("DB close failed.")
-
         super().closeEvent(event)

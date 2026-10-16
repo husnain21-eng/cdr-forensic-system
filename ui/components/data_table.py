@@ -34,6 +34,9 @@ class DataTable(QTableView):
         self.verticalHeader().setDefaultSectionSize(32)
         self.verticalHeader().setVisible(False)
         self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setSectionResizeMode(
+            self.horizontalHeader().ResizeToContents
+        )
 
         # Keyboard shortcuts
         QShortcut(QKeySequence.Copy, self, activated=self._copy_selection)

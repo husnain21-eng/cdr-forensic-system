@@ -91,6 +91,7 @@ class AnomaliesTab(QWidget):
         splitter.addWidget(night_box)
 
         splitter.setSizes([350, 350])
+        splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter, 1)
 
         return page

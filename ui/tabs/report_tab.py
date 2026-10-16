@@ -76,7 +76,7 @@ class ReportTab(QWidget):
         self.txt_rationale.setReadOnly(True)
         self.txt_rationale.setMaximumHeight(120)
         self.txt_rationale.setStyleSheet(
-            "font-size: 12px; color: #4B5563;"
+            "font-size: 14px; color: #4B5563;"
             "background: #F9FAFB;"
             "border: 1px solid #E5E7EB;"
             "border-radius: 6px;"
@@ -92,7 +92,7 @@ class ReportTab(QWidget):
         preview_layout = QVBoxLayout(preview_box)
 
         self.lbl_preview = QLabel("—")
-        self.lbl_preview.setStyleSheet("font-size: 12px; color: #4B5563;")
+        self.lbl_preview.setStyleSheet("font-size: 14px; color: #4B5563;")
         self.lbl_preview.setWordWrap(True)
         preview_layout.addWidget(self.lbl_preview)
 

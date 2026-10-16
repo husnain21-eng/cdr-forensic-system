@@ -40,7 +40,7 @@ class DatabaseTab(QWidget):
 
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet(
-            "color: #6B7280; font-size: 12px;"
+            "color: #6B7280; font-size: 14px;"
         )
 
         btn_refresh = QPushButton("🔄 Refresh")
@@ -102,7 +102,7 @@ class DatabaseTab(QWidget):
 
         self.model.set_dataframe(df)
         self.lbl_status.setText(f"{len(df)} entries")
-        self.lbl_status.setStyleSheet("color: #6B7280; font-size: 12px;")
+        self.lbl_status.setStyleSheet("color: #6B7280; font-size: 14px;")
 
     def verify_integrity(self) -> None:
         """Verify HMAC signatures for every audit row."""
@@ -139,12 +139,12 @@ class DatabaseTab(QWidget):
 
         if invalid == 0:
             self.lbl_status.setStyleSheet(
-                "color: #16A34A; font-size: 12px; font-weight: 600;"
+                "color: #16A34A; font-size: 14px; font-weight: 600;"
             )
             self.lbl_status.setText(f"✅ All {valid} entries verified (HMAC valid)")
         else:
             self.lbl_status.setStyleSheet(
-                "color: #DC2626; font-size: 12px; font-weight: 600;"
+                "color: #DC2626; font-size: 14px; font-weight: 600;"
             )
             self.lbl_status.setText(
                 f"⚠️ {invalid} entries could not be verified, {valid} valid"

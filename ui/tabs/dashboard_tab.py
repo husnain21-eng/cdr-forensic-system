@@ -1,16 +1,16 @@
 """Dashboard tab — the landing page after login.
 
-Displays:
-  - Top interlocutors bar chart (matplotlib)
-  - Risk assessment card
-  - Anomaly summary card
+Layout (top → bottom):
+  1. Top Interlocutors chart (full width)
+  2. Risk Assessment + Anomaly Summary side by side
 
-This tab is dumb: it receives prepared data and displays it. All
-analysis happens in the main window.
+Vertical stacking means neither the chart nor the text cards get
+squeezed horizontally at any font size.
 """
 from __future__ import annotations
 
 import pandas as pd
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -39,7 +39,6 @@ class DashboardTab(QWidget):
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
 
-        # Page 0 — Empty
         self.empty = EmptyState(
             icon="📊",
             title="No dashboard yet",
@@ -47,7 +46,6 @@ class DashboardTab(QWidget):
         )
         self.stack.addWidget(self.empty)
 
-        # Page 1 — Content
         self.content = self._build_content()
         self.stack.addWidget(self.content)
 
@@ -57,39 +55,51 @@ class DashboardTab(QWidget):
 
     def _build_content(self) -> QWidget:
         page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
+        page.setMinimumWidth(700)
+        page.setMinimumHeight(560)
 
-        # Left: chart
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        # --- TOP: chart (full width) ---
         chart_box = QGroupBox("Top Interlocutors")
         chart_layout = QVBoxLayout(chart_box)
-        self.canvas = FigureCanvasQTAgg(Figure(figsize=(5, 4), dpi=90))
+        chart_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.canvas = FigureCanvasQTAgg(Figure(figsize=(9, 4), dpi=90))
+        self.canvas.setMinimumHeight(340)
         self.ax = self.canvas.figure.add_subplot(111)
         chart_layout.addWidget(self.canvas)
+
         layout.addWidget(chart_box, 3)
 
-        # Right: risk + anomalies
-        right = QVBoxLayout()
-        right.setSpacing(16)
+        # --- BOTTOM: Risk + Anomalies side by side ---
+        bottom = QHBoxLayout()
+        bottom.setSpacing(12)
 
-        # Risk card
+        # --- Risk card ---
         risk_box = QGroupBox("Risk Assessment")
+        risk_box.setMinimumWidth(320)
         risk_layout = QVBoxLayout(risk_box)
+        risk_layout.setContentsMargins(12, 16, 12, 12)
+        risk_layout.setSpacing(6)
 
         self.lbl_score = QLabel("—")
         self.lbl_score.setStyleSheet(
             "font-size: 28px; font-weight: 700; color: #374151;"
         )
+        self.lbl_score.setWordWrap(True)
 
         self.lbl_level = QLabel("—")
         self.lbl_level.setStyleSheet(
-            "font-size: 13px; font-weight: 600; color: #6B7280;"
+            "font-size: 14px; font-weight: 600; color: #6B7280;"
         )
+        self.lbl_level.setWordWrap(True)
 
         self.txt_rationale = QTextEdit()
         self.txt_rationale.setReadOnly(True)
-        self.txt_rationale.setMaximumHeight(140)
+        self.txt_rationale.setMinimumHeight(120)
         self.txt_rationale.setStyleSheet(
             "font-size: 12px; color: #4B5563;"
             "background: #F9FAFB;"
@@ -99,25 +109,29 @@ class DashboardTab(QWidget):
 
         risk_layout.addWidget(self.lbl_score)
         risk_layout.addWidget(self.lbl_level)
-        risk_layout.addWidget(self.txt_rationale)
-        right.addWidget(risk_box)
+        risk_layout.addWidget(self.txt_rationale, 1)
 
-        # Anomalies card
-        anomalies_box = QGroupBox("Anomaly Summary")
-        anomalies_layout = QVBoxLayout(anomalies_box)
+        bottom.addWidget(risk_box, 1)
+
+        # --- Anomaly card ---
+        anom_box = QGroupBox("Anomaly Summary")
+        anom_box.setMinimumWidth(320)
+        anom_layout = QVBoxLayout(anom_box)
+        anom_layout.setContentsMargins(12, 16, 12, 12)
 
         self.lbl_anomalies = QLabel("—")
-        self.lbl_anomalies.setStyleSheet("font-size: 12px; color: #4B5563;")
+        self.lbl_anomalies.setWordWrap(True)
+        self.lbl_anomalies.setTextFormat(Qt.RichText)
+        self.lbl_anomalies.setStyleSheet(
+            "font-size: 13px; color: #374151;"
+        )
+        self.lbl_anomalies.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-        anomalies_layout.addWidget(self.lbl_anomalies)
-        right.addWidget(anomalies_box)
+        anom_layout.addWidget(self.lbl_anomalies, 1)
 
-        right.addStretch()
+        bottom.addWidget(anom_box, 1)
 
-        right_widget = QWidget()
-        right_widget.setLayout(right)
-        layout.addWidget(right_widget, 2)
-
+        layout.addLayout(bottom, 2)
         return page
 
     # ---------- public API ----------
@@ -128,13 +142,6 @@ class DashboardTab(QWidget):
         risk: RiskAssessment,
         anomaly_summary: dict,
     ) -> None:
-        """Refresh the dashboard with new data.
-
-        Args:
-            df: Normalized CDR DataFrame.
-            risk: RiskAssessment from data.analyzer.risk.compute_risk.
-            anomaly_summary: dict from data.analyzer.anomalies.summary.
-        """
         if df.empty:
             self.stack.setCurrentIndex(0)
             return
@@ -152,12 +159,15 @@ class DashboardTab(QWidget):
             if not top.empty:
                 self.ax.barh(top.index, top.values, color="#2563EB")
                 self.ax.invert_yaxis()
-                self.ax.set_xlabel("Call count", fontsize=9)
-                self.ax.tick_params(axis="y", labelsize=9)
-                self.ax.tick_params(axis="x", labelsize=9)
+                self.ax.set_xlabel("Call count", fontsize=10)
+                self.ax.tick_params(axis="y", labelsize=10)
+                self.ax.tick_params(axis="x", labelsize=10)
                 for spine in ("top", "right"):
                     self.ax.spines[spine].set_visible(False)
-        self.canvas.figure.tight_layout()
+                # Reserve 30% of the width for phone-number labels
+                self.canvas.figure.subplots_adjust(
+                    left=0.32, right=0.98, top=0.92, bottom=0.14
+                )
         self.canvas.draw()
 
         # --- Risk card ---
@@ -172,7 +182,7 @@ class DashboardTab(QWidget):
         color = level_colors.get(risk.level, "#6B7280")
         self.lbl_level.setText(f"● {risk.level}")
         self.lbl_level.setStyleSheet(
-            f"font-size: 13px; font-weight: 600; color: {color};"
+            f"font-size: 14px; font-weight: 600; color: {color};"
         )
         self.lbl_score.setStyleSheet(
             f"font-size: 28px; font-weight: 700; color: {color};"
@@ -180,7 +190,7 @@ class DashboardTab(QWidget):
 
         self.txt_rationale.setPlainText(risk.rationale)
 
-        # --- Anomalies card ---
+        # --- Anomaly card ---
         total = anomaly_summary.get("total", 0)
         short = anomaly_summary.get("short_calls", 0)
         night = anomaly_summary.get("night_calls", 0)
@@ -188,13 +198,14 @@ class DashboardTab(QWidget):
         night_pct = anomaly_summary.get("night_pct", 0.0)
 
         self.lbl_anomalies.setText(
-            f"<b>Total records:</b> {total:,}<br>"
-            f"<b>Short calls (≤5s):</b> {short:,} ({short_pct}%)<br>"
-            f"<b>Night calls (23:00–05:00):</b> {night:,} ({night_pct}%)"
+            f"<b>Total records:</b> {total:,}<br><br>"
+            f"<b>Short calls (≤5s):</b><br>"
+            f"{short:,} &nbsp;({short_pct}%)<br><br>"
+            f"<b>Night calls (23:00–05:00):</b><br>"
+            f"{night:,} &nbsp;({night_pct}%)"
         )
 
         self.stack.setCurrentIndex(1)
 
     def clear(self) -> None:
-        """Return to the empty state."""
         self.stack.setCurrentIndex(0)

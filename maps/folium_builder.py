@@ -1,6 +1,7 @@
 """Interactive Folium map generation.
 
-Only plots records with valid lat/lon. Never fabricates coordinates.
+Uses Esri World Street Map tiles — free, no API key needed, and works
+from local file:// URLs. Markers are clustered to prevent overlap.
 """
 from __future__ import annotations
 
@@ -11,9 +12,14 @@ from pathlib import Path
 
 import folium
 import pandas as pd
-from folium.plugins import HeatMap
+from folium.plugins import HeatMap, MarkerCluster
 
 log = logging.getLogger(__name__)
+
+
+# Free tiles that work from file:// without an API key
+ESRI_TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
+ESRI_ATTR = "Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS"
 
 
 def build_map(
@@ -26,14 +32,6 @@ def build_map(
     auto_open: bool = True,
 ) -> Path:
     """Build a Folium map and (optionally) open it in the default browser.
-
-    Args:
-        df_a: Target A DataFrame (normalized).
-        df_b: Optional Target B DataFrame.
-        colocations: Optional DataFrame from data.analyzer.colocation.
-        show_heatmap: Add a density heatmap layer.
-        show_triangulation: Draw 800m circles around each target marker.
-        auto_open: Open the generated HTML in the browser.
 
     Raises:
         ValueError: if there are no valid coordinates in the input.
@@ -48,7 +46,12 @@ def build_map(
         )
 
     center = _center(valid_a, valid_b)
-    m = folium.Map(location=center, zoom_start=12)
+    m = folium.Map(
+        location=center,
+        zoom_start=12,
+        tiles=ESRI_TILES,
+        attr=ESRI_ATTR,
+    )
 
     # --- Heatmap layer ---
     if show_heatmap and not valid_a.empty:
@@ -58,47 +61,66 @@ def build_map(
             blur=10,
         ).add_to(m)
 
-    # --- Triangulation circles ---
+    # --- Triangulation circles (behind markers, deduped) ---
     if show_triangulation:
-        for _, row in valid_a.head(200).iterrows():
+        unique_a = _dedupe_points(valid_a, precision=4)
+        for _, row in unique_a.head(200).iterrows():
             folium.Circle(
                 location=[row["lat"], row["lon"]],
                 radius=800,
                 color="#2980B9",
                 fill=True,
                 fill_color="#3498DB",
-                fill_opacity=0.15,
+                fill_opacity=0.12,
+                weight=1,
                 popup="Triangulation radius (indicative)",
             ).add_to(m)
 
-    # --- Target A markers ---
-    for _, row in valid_a.head(500).iterrows():
+    # --- Target A markers inside a MarkerCluster ---
+    unique_a_markers = _dedupe_points(valid_a, precision=5)
+    cluster_a = MarkerCluster(name="Target A").add_to(m)
+    for _, row in unique_a_markers.head(1000).iterrows():
         folium.Marker(
             location=[row["lat"], row["lon"]],
-            popup=f"Target A: {row.get('party_a', 'N/A')}",
+            popup=(
+                f"<b>Target A</b><br>"
+                f"Lat: {row['lat']:.5f}<br>"
+                f"Lon: {row['lon']:.5f}<br>"
+                f"Records: {int(row.get('count', 1))}"
+            ),
             icon=folium.Icon(color="blue", icon="user"),
-        ).add_to(m)
+        ).add_to(cluster_a)
 
     # --- Target B markers ---
-    for _, row in valid_b.head(500).iterrows():
-        folium.Marker(
-            location=[row["lat"], row["lon"]],
-            popup="Target B",
-            icon=folium.Icon(color="purple", icon="user"),
-        ).add_to(m)
-
-    # --- Co-location stars ---
-    if colocations is not None and not colocations.empty:
-        for _, row in colocations.head(200).iterrows():
+    if not valid_b.empty:
+        unique_b_markers = _dedupe_points(valid_b, precision=5)
+        cluster_b = MarkerCluster(name="Target B").add_to(m)
+        for _, row in unique_b_markers.head(1000).iterrows():
             folium.Marker(
                 location=[row["lat"], row["lon"]],
                 popup=(
-                    f"Possible co-location<br>"
+                    f"<b>Target B</b><br>"
+                    f"Lat: {row['lat']:.5f}<br>"
+                    f"Lon: {row['lon']:.5f}<br>"
+                    f"Records: {int(row.get('count', 1))}"
+                ),
+                icon=folium.Icon(color="purple", icon="user"),
+            ).add_to(cluster_b)
+
+    # --- Co-location stars ---
+    if colocations is not None and not colocations.empty:
+        unique_coloc = _dedupe_points(colocations, precision=5)
+        cluster_c = MarkerCluster(name="Co-location").add_to(m)
+        for _, row in unique_coloc.head(500).iterrows():
+            folium.Marker(
+                location=[row["lat"], row["lon"]],
+                popup=(
+                    f"<b>⭐ Possible co-location</b><br>"
                     f"Δt = {row['delta_sec']:.0f}s<br>"
                     f"dist ≈ {row['distance_deg']:.4f}°"
                 ),
                 icon=folium.Icon(color="orange", icon="star"),
-            ).add_to(m)
+            ).add_to(cluster_c)
 
     folium.LayerControl(collapsed=False).add_to(m)
 
@@ -115,7 +137,6 @@ def build_map(
 # ---------- helpers ----------
 
 def _valid_points(df: pd.DataFrame | None) -> pd.DataFrame:
-    """Return rows with non-null lat/lon as a clean DataFrame."""
     if df is None or df.empty:
         return pd.DataFrame(columns=["lat", "lon"])
     if "lat" not in df.columns or "lon" not in df.columns:
@@ -123,8 +144,23 @@ def _valid_points(df: pd.DataFrame | None) -> pd.DataFrame:
     return df.dropna(subset=["lat", "lon"])[["lat", "lon"]].copy()
 
 
+def _dedupe_points(df: pd.DataFrame, precision: int = 5) -> pd.DataFrame:
+    """Collapse points that are (nearly) identical into one."""
+    if df.empty:
+        return df
+    work = df.copy()
+    work["lat_r"] = work["lat"].round(precision)
+    work["lon_r"] = work["lon"].round(precision)
+    grouped = (
+        work.groupby(["lat_r", "lon_r"])
+            .size()
+            .reset_index(name="count")
+            .rename(columns={"lat_r": "lat", "lon_r": "lon"})
+    )
+    return grouped
+
+
 def _center(a: pd.DataFrame, b: pd.DataFrame) -> list[float]:
-    """Compute a rough center point from valid data."""
     frames = [x for x in (a, b) if not x.empty]
     if not frames:
         return [0.0, 0.0]
