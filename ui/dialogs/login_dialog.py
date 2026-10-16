@@ -1,11 +1,16 @@
-"""Login and registration dialog.
+"""Login and registration dialog with strong password policy.
 
-Modern split-panel layout with brand panel on the left and form on
-the right. Handles login, registration, and brute-force lockout.
+Password requirements:
+  - At least 10 characters
+  - At least one uppercase letter
+  - At least one lowercase letter
+  - At least one digit
+  - At least one special character
 """
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,12 +39,26 @@ from ui.theme.stylesheet import stylesheet
 
 log = logging.getLogger(__name__)
 
+SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+
+
+def validate_password_strength(password: str) -> str | None:
+    """Return None if password is strong, or an error message."""
+    if len(password) < 10:
+        return "Password must be at least 10 characters."
+    if not any(c.isupper() for c in password):
+        return "Password must contain an uppercase letter."
+    if not any(c.islower() for c in password):
+        return "Password must contain a lowercase letter."
+    if not any(c.isdigit() for c in password):
+        return "Password must contain a digit."
+    if not any(c in SPECIAL_CHARS for c in password):
+        return "Password must contain a special character."
+    return None
+
 
 class LoginDialog(QDialog):
-    """Authenticate or register a user.
-
-    After exec_() returns QDialog.Accepted, read .username and .role.
-    """
+    """Authenticate or register a user."""
 
     def __init__(self, db_path: str | Path, parent=None):
         super().__init__(parent)
@@ -62,7 +81,6 @@ class LoginDialog(QDialog):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
         root.addWidget(self._build_brand_panel())
         root.addWidget(self._build_form_panel(), 1)
 
@@ -75,7 +93,6 @@ class LoginDialog(QDialog):
             "  stop:0 #1E3A8A, stop:1 #2563EB);"
             "}"
         )
-
         layout = QVBoxLayout(brand)
         layout.setContentsMargins(36, 40, 36, 40)
         layout.setSpacing(10)
@@ -96,9 +113,7 @@ class LoginDialog(QDialog):
             "color: rgba(255,255,255,0.78); font-size: 13px;"
         )
 
-        restricted = QLabel(
-            "Restricted — authorized personnel only"
-        )
+        restricted = QLabel("Restricted — authorized personnel only")
         restricted.setStyleSheet(
             "color: rgba(255,255,255,0.5); font-size: 11px;"
         )
@@ -110,7 +125,6 @@ class LoginDialog(QDialog):
         layout.addWidget(subtitle)
         layout.addStretch()
         layout.addWidget(restricted)
-
         return brand
 
     def _build_form_panel(self) -> QWidget:
@@ -159,9 +173,17 @@ class LoginDialog(QDialog):
         layout.addSpacing(4)
         layout.addWidget(btn_login)
         layout.addWidget(btn_register)
+
+        hint = QLabel(
+            "<small style='color:#9CA3AF;'>"
+            "Password must be 10+ chars with upper, lower, digit, and symbol."
+            "</small>"
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
         layout.addStretch()
 
-        # Show first-run hint if no users exist
         if self._user_count() == 0:
             self.lbl_status.setStyleSheet(
                 "color: #2563EB; font-size: 12px;"
@@ -202,7 +224,6 @@ class LoginDialog(QDialog):
 
         salt_hex, hash_hex, role, failed, locked_until = row
 
-        # Lockout check
         if locked_until:
             try:
                 locked_dt = datetime.fromisoformat(locked_until)
@@ -217,12 +238,10 @@ class LoginDialog(QDialog):
                 )
                 return
 
-        # Verify
         if not verify_password(pwd, salt_hex, hash_hex):
             self._record_failure(user, failed)
             return
 
-        # Success
         with self._db.cursor() as cur:
             cur.execute(
                 "UPDATE system_users "
@@ -245,8 +264,14 @@ class LoginDialog(QDialog):
             self._set_error("Enter both username and password.")
             return
 
-        if len(pwd) < 6:
-            self._set_error("Password must be at least 6 characters.")
+        if len(user) < 3:
+            self._set_error("Username must be at least 3 characters.")
+            return
+
+        # Strong password policy
+        error = validate_password_strength(pwd)
+        if error:
+            self._set_error(error)
             return
 
         try:
@@ -271,7 +296,9 @@ class LoginDialog(QDialog):
             self._set_error(f"Registration failed: {e}")
             return
 
-        self._set_success(f"Account '{user}' registered as {role}. Sign in now.")
+        self._set_success(
+            f"Account '{user}' registered as {role}. Sign in now."
+        )
 
     # ---------- helpers ----------
 
@@ -292,7 +319,7 @@ class LoginDialog(QDialog):
                 + timedelta(seconds=LOCKOUT_SECONDS)
             )
             locked_until = lock_time.isoformat()
-            attempts = 0  # reset counter once locked
+            attempts = 0
             self._set_error(
                 f"Too many attempts. Locked for {LOCKOUT_SECONDS}s."
             )
@@ -328,7 +355,6 @@ class LoginDialog(QDialog):
     # ---------- lifecycle ----------
 
     def reject(self) -> None:
-        """Close the DB cleanly when the user cancels."""
         try:
             self._db.close()
         except Exception:

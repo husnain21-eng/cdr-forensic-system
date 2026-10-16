@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QPushButton,
+    QScrollArea,
     QShortcut,
     QTabWidget,
     QVBoxLayout,
@@ -32,8 +34,11 @@ from data.analyzer.mutual import mutual_contacts
 from data.analyzer.risk import compute_risk
 from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
+from ui.components.print_helper import print_widget
 from ui.components.toolbar import TopToolbar
 from ui.components.toast import toast
+from ui.dialogs.confirm_dialog import confirm
+from ui.dialogs.filters_dialog import FiltersDialog
 from ui.tabs.anomalies_tab import AnomaliesTab
 from ui.tabs.dashboard_tab import DashboardTab
 from ui.tabs.database_tab import DatabaseTab
@@ -71,22 +76,53 @@ class MainWindow(QMainWindow):
         self.db.open()
         self.audit = AuditTrail(self.db)
 
+        # Full dataset (unfiltered) and filtered view
+        self.df_raw_a = pd.DataFrame()
+        self.df_raw_b = pd.DataFrame()
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
+
+        # Active filter state (so we can re-apply on reload)
+        self._filter_state: dict = {
+            "phone": "",
+            "use_date": False,
+            "from": None,
+            "to": None,
+        }
 
         self._theme_is_dark = False
         self._idle_seconds = 0
         self._font_size = user_settings.get("font_size", 14)
 
         self._build_ui()
+        self._auto_size_to_screen()
 
         self.audit.log(
             self.current_user, self.current_role,
             "LOGIN", "Session started.",
         )
-
         self._install_idle_watch()
         self._install_shortcuts()
+
+    # ============================================================
+    # SCREEN AUTO-SIZING
+    # ============================================================
+
+    def _auto_size_to_screen(self) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1400, 880)
+            return
+        available = screen.availableGeometry()
+        target_w = min(int(available.width() * 0.92), 1600)
+        target_h = min(int(available.height() * 0.92), 1000)
+        min_w = min(1000, int(available.width() * 0.80))
+        min_h = min(640, int(available.height() * 0.80))
+        self.setMinimumSize(min_w, min_h)
+        self.resize(target_w, target_h)
+        x = available.x() + (available.width() - target_w) // 2
+        y = available.y() + (available.height() - target_h) // 2
+        self.move(x, y)
 
     # ============================================================
     # UI CONSTRUCTION
@@ -96,9 +132,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             f"CDR Forensic System — {self.current_user} [{self.current_role}]"
         )
-        self.resize(1400, 880)
-        self.setMinimumSize(1000, 640)
-
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -117,9 +150,20 @@ class MainWindow(QMainWindow):
         self._build_tabs()
         root.addWidget(self.tabs, 1)
 
+        self._install_print_corner_button()
         self._build_status_bar()
         self._wire_toolbar()
         self._apply_theme()
+
+    def _install_print_corner_button(self) -> None:
+        self.print_btn = QPushButton("🖨  Print Tab")
+        self.print_btn.setToolTip("Print the current tab (Ctrl+P)")
+        self.print_btn.setMinimumHeight(28)
+        self.print_btn.setStyleSheet(
+            "QPushButton { padding: 4px 12px; font-size: 12px; }"
+        )
+        self.print_btn.clicked.connect(self._on_print_current_tab)
+        self.tabs.setCornerWidget(self.print_btn, Qt.TopRightCorner)
 
     def _build_tabs(self) -> None:
         self.tab_dashboard = DashboardTab()
@@ -135,20 +179,24 @@ class MainWindow(QMainWindow):
             self.tab_anomalies, self.tab_database, self.tab_report,
             self.tab_inspector,
         ]):
-            self.tabs.addTab(tab, label)
+            self.tabs.addTab(self._scrollable(tab), label)
 
-        # ---- Connect the map tab's signal (was orphaned before) ----
         self.tab_map.launch_map_requested.connect(self._on_launch_map)
         self.tab_report.export_pdf_requested.connect(self._on_export_pdf)
-        self.tab_map.launch_map_requested.connect(self._on_launch_map)
-        self.tab_report.export_pdf_requested.connect(self._on_export_pdf)
+
+    def _scrollable(self, inner: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(inner)
+        return scroll
 
     def _build_status_bar(self) -> None:
         sb = self.statusBar()
-
         self.status_label = QLabel("Ready.")
 
-        # Progress bar (hidden until a load starts)
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximumWidth(220)
         self.progress_bar.setMaximumHeight(16)
@@ -167,11 +215,164 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.lock_label)
 
     # ============================================================
-    # PROGRESS HELPERS
+    # PRINT
+    # ============================================================
+
+    def _on_print_current_tab(self) -> None:
+        current = self.tabs.currentWidget()
+        if current is None:
+            return
+        tab_name = self.tabs.tabText(self.tabs.currentIndex()).strip()
+        try:
+            printed = print_widget(current, parent=self, landscape=True)
+            if not printed:
+                return
+            self.audit.log(
+                self.current_user, self.current_role,
+                "PRINT_TAB", f"Printed tab: {tab_name}",
+            )
+            toast(self, f"Sent '{tab_name}' to printer", tone="success")
+            self.status_label.setText(f"Printed: {tab_name}")
+        except Exception as e:
+            log.exception("Print failed.")
+            QMessageBox.critical(self, "Print error", str(e))
+
+    # ============================================================
+    # FILTERS
+    # ============================================================
+
+    def _on_open_filters(self) -> None:
+        dlg = FiltersDialog(
+            self,
+            default_from=self._filter_state.get("from"),
+            default_to=self._filter_state.get("to"),
+            default_phone=self._filter_state.get("phone", ""),
+        )
+        if dlg.exec_() != FiltersDialog.Accepted:
+            return
+
+        values = dlg.get_values()
+        self._filter_state = values
+        self._apply_filter()
+
+        self.audit.log(
+            self.current_user, self.current_role,
+            "APPLY_FILTER",
+            f"phone='{values['phone']}', "
+            f"date_range={values['use_date']}",
+        )
+
+    def _apply_filter(self) -> None:
+        """Apply the current filter state to df_raw_a and refresh tabs."""
+        if self.df_raw_a.empty:
+            toast(self, "No data to filter", tone="warning")
+            return
+
+        df = self.df_raw_a.copy()
+        state = self._filter_state
+
+        # Phone filter (contains match on party_a OR party_b)
+        phone = state.get("phone", "")
+        if phone:
+            df = df[
+                df["party_a"].astype(str).str.contains(phone, na=False)
+                | df["party_b"].astype(str).str.contains(phone, na=False)
+            ]
+
+        # Date/time range filter
+        if state.get("use_date") and "timestamp" in df.columns:
+            dt_from = state.get("from")
+            dt_to = state.get("to")
+            if dt_from is not None and dt_to is not None:
+                df = df[
+                    (df["timestamp"] >= pd.Timestamp(dt_from))
+                    & (df["timestamp"] <= pd.Timestamp(dt_to))
+                ]
+
+        self.df_a = df.reset_index(drop=True)
+        self._refresh_all()
+
+        if len(self.df_a) < len(self.df_raw_a):
+            self.status_label.setText(
+                f"Filtered: {len(self.df_a):,} of {len(self.df_raw_a):,} records"
+            )
+            toast(
+                self,
+                f"Filtered to {len(self.df_a):,} records",
+                tone="info",
+            )
+        else:
+            self.status_label.setText(
+                f"{len(self.df_a):,} records (no filter applied)"
+            )
+
+    def _clear_filter(self) -> None:
+        """Reset all filters and show the full dataset."""
+        self._filter_state = {
+            "phone": "",
+            "use_date": False,
+            "from": None,
+            "to": None,
+        }
+        self.df_a = self.df_raw_a.copy()
+        self._refresh_all()
+        toast(self, "Filters cleared", tone="info")
+
+    # ============================================================
+    # RESET SESSION
+    # ============================================================
+
+    def _on_reset_session(self) -> None:
+        if self.df_raw_a.empty and self.df_raw_b.empty:
+            toast(self, "Nothing to reset", tone="warning")
+            return
+
+        ok = confirm(
+            self,
+            "Reset Session?",
+            "All loaded CDR data will be cleared from memory. "
+            "The audit trail and user accounts are preserved. "
+            "This cannot be undone.",
+            danger=True,
+            ok_text="Reset Session",
+        )
+        if not ok:
+            return
+
+        self.df_raw_a = pd.DataFrame()
+        self.df_raw_b = pd.DataFrame()
+        self.df_a = pd.DataFrame()
+        self.df_b = pd.DataFrame()
+        self._filter_state = {
+            "phone": "",
+            "use_date": False,
+            "from": None,
+            "to": None,
+        }
+
+        # Reset each tab to its empty state
+        self.tab_dashboard.clear()
+        self.tab_network.clear()
+        self.tab_map.clear()
+        self.tab_anomalies.clear()
+        self.tab_report.clear()
+        self.tab_inspector.clear()
+        self.tab_database.refresh()
+
+        self.status_label.setText("Session reset — no data loaded.")
+        self.toolbar.search.clear()
+
+        self.audit.log(
+            self.current_user, self.current_role,
+            "RESET_SESSION", "Cleared all loaded CDR data.",
+        )
+        toast(self, "Session reset", tone="success")
+
+    # ============================================================
+    # PROGRESS
     # ============================================================
 
     def _show_progress(self, label: str, maximum: int = 0) -> None:
-        """Show the progress bar. maximum=0 means indeterminate."""
         self.status_label.setText(label)
         self.progress_bar.setRange(0, maximum)
         self.progress_bar.setValue(0)
@@ -200,6 +401,8 @@ class MainWindow(QMainWindow):
         self.toolbar.toggle_theme.connect(self._on_toggle_theme)
         self.toolbar.font_increase.connect(self._on_font_increase)
         self.toolbar.font_decrease.connect(self._on_font_decrease)
+        self.toolbar.open_filters.connect(self._on_open_filters)
+        self.toolbar.reset_session.connect(self._on_reset_session)
 
     # ============================================================
     # FILE LOADING
@@ -233,9 +436,7 @@ class MainWindow(QMainWindow):
         self._load_into_slot(path, target="B")
 
     def _load_into_slot(self, path, target) -> None:
-        self._show_progress(
-            f"Loading {Path(path).name}…", maximum=0
-        )
+        self._show_progress(f"Loading {Path(path).name}…", maximum=0)
         try:
             df = load_single_file(path)
         except Exception as e:
@@ -243,13 +444,19 @@ class MainWindow(QMainWindow):
             log.exception("Load failed.")
             QMessageBox.critical(self, "Load failed", str(e))
             return
-
         self._hide_progress()
 
         if target == "A":
-            self.df_a = df
+            self.df_raw_a = df
+            self.df_a = df.copy()
         else:
-            self.df_b = df
+            self.df_raw_b = df
+            self.df_b = df.copy()
+
+        # Auto-populate filter date range from data
+        if target == "A" and "timestamp" in df.columns and df["timestamp"].notna().any():
+            self._filter_state["from"] = df["timestamp"].min().to_pydatetime()
+            self._filter_state["to"] = df["timestamp"].max().to_pydatetime()
 
         label = f"Target {target}: {len(df):,} records"
         self.audit.log(
@@ -283,16 +490,19 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Combining step
         self._update_progress(total, "Combining files…")
-
         combined = pd.concat(frames, ignore_index=True)
         combined = combined.loc[:, ~combined.columns.duplicated()]
         combined.reset_index(drop=True, inplace=True)
-
         self._hide_progress()
 
-        self.df_a = combined
+        self.df_raw_a = combined
+        self.df_a = combined.copy()
+
+        if "timestamp" in combined.columns and combined["timestamp"].notna().any():
+            self._filter_state["from"] = combined["timestamp"].min().to_pydatetime()
+            self._filter_state["to"] = combined["timestamp"].max().to_pydatetime()
+
         label = f"Bulk: {total} files, {len(combined):,} records"
         self.audit.log(
             self.current_user, self.current_role,
@@ -303,15 +513,12 @@ class MainWindow(QMainWindow):
         self._refresh_all()
 
     # ============================================================
-    # MAP LAUNCH (fixes the previously orphaned signal)
+    # MAP
     # ============================================================
 
     def _on_launch_map(self) -> None:
         if self.df_a.empty:
-            QMessageBox.warning(
-                self, "No data",
-                "Load a CDR file first.",
-            )
+            QMessageBox.warning(self, "No data", "Load a CDR file first.")
             return
 
         self._show_progress("Generating map…", maximum=0)
@@ -328,13 +535,12 @@ class MainWindow(QMainWindow):
                 show_triangulation=self.tab_map.triangulation_enabled(),
             )
             self._hide_progress()
-
             self.audit.log(
                 self.current_user, self.current_role,
                 "OPEN_MAP", f"Map opened: {out}",
             )
             toast(self, "Map opened in browser", tone="success")
-
+            self.status_label.setText("Map opened in browser.")
         except ValueError as e:
             self._hide_progress()
             QMessageBox.warning(self, "No coordinates", str(e))
@@ -344,7 +550,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Map error", str(e))
 
     # ============================================================
-    # PDF EXPORT (bonus — wires the report tab's signal too)
+    # PDF EXPORT
     # ============================================================
 
     def _on_export_pdf(self) -> None:
@@ -364,7 +570,6 @@ class MainWindow(QMainWindow):
 
             df = self.df_a
             risk = compute_risk(df)
-
             top = (
                 df["party_b"].dropna().astype(str)
                 .value_counts().head(20)
@@ -389,13 +594,12 @@ class MainWindow(QMainWindow):
                 towers=list(towers.items()),
             )
             self._hide_progress()
-
             self.audit.log(
                 self.current_user, self.current_role,
                 "EXPORT_PDF", str(path),
             )
             toast(self, "PDF saved", tone="success")
-
+            self.status_label.setText(f"PDF saved: {path}")
         except Exception as e:
             self._hide_progress()
             log.exception("PDF export failed.")
@@ -419,11 +623,9 @@ class MainWindow(QMainWindow):
             return
 
         df = self.df_a
-
         try:
             g = build_call_graph(df)
             centrality = centrality_table(g)
-
             mutual = (
                 mutual_contacts(df, self.df_b)
                 if not self.df_b.empty else None
@@ -444,7 +646,6 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})"
             )
-
         except Exception as e:
             log.exception("Refresh pipeline failed.")
             QMessageBox.critical(self, "Analysis error", str(e))
@@ -512,14 +713,12 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             log.exception("Audit on auto-lock failed.")
-
         try:
             self.db.close()
         except Exception:
             log.exception("DB close on auto-lock failed.")
 
         self.hide()
-
         from ui.dialogs.login_dialog import LoginDialog
         login = LoginDialog(self.db_path, parent=self)
         if login.exec_() != LoginDialog.Accepted or not login.username:
@@ -554,6 +753,9 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+R"), self, activated=self._refresh_all)
         QShortcut(QKeySequence("Ctrl+="), self, activated=self._on_font_increase)
         QShortcut(QKeySequence("Ctrl+-"), self, activated=self._on_font_decrease)
+        QShortcut(QKeySequence("Ctrl+P"), self, activated=self._on_print_current_tab)
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self._on_open_filters)
+        QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self._on_reset_session)
 
     # ============================================================
     # LIFECYCLE

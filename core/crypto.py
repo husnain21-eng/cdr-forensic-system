@@ -1,4 +1,4 @@
-"""Cryptographic primitives."""
+"""Cryptographic primitives + secure file deletion."""
 import hashlib
 import hmac
 import os
@@ -64,3 +64,32 @@ def audit_hmac(message: str) -> str:
         message.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def secure_shred(path: str, passes: int = 3) -> None:
+    """Overwrite a file with random bytes before deleting it.
+
+    A simple 3-pass overwrite — good enough to defeat casual recovery
+    tools. For defense against sophisticated forensics, use full-disk
+    encryption at the OS level.
+    """
+    if not os.path.exists(path):
+        return
+    try:
+        size = os.path.getsize(path)
+        if size == 0:
+            os.remove(path)
+            return
+        with open(path, "r+b") as f:
+            for _ in range(passes):
+                f.seek(0)
+                f.write(os.urandom(size))
+                f.flush()
+                os.fsync(f.fileno())
+        os.remove(path)
+    except Exception:
+        # Last resort — try to remove at least
+        try:
+            os.remove(path)
+        except Exception:
+            pass

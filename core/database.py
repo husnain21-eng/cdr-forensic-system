@@ -1,18 +1,14 @@
-"""Encrypted SQLite wrapper.
+"""Encrypted SQLite wrapper with secure temp-file handling.
 
-Lifecycle:
-  open()   → decrypt .enc to a temp file, connect, create schema
-  cursor() → context manager for running queries
-  close()  → commit, encrypt temp file back to .enc, shred temp
+Schema includes hash-chained audit log for tamper detection.
 """
 import os
-import shutil
 import sqlite3
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from core.crypto import _fernet
+from core.crypto import _fernet, secure_shred
 
 
 SCHEMA = """
@@ -32,6 +28,7 @@ CREATE TABLE IF NOT EXISTS audit_trail_log (
     role TEXT,
     action_type TEXT,
     details TEXT,
+    previous_hash TEXT,
     digital_signature TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -51,7 +48,6 @@ class Database:
     # ---------- lifecycle ----------
 
     def open(self) -> None:
-        """Decrypt .enc (if present) into a temp file and connect."""
         if self._conn is not None:
             return
 
@@ -71,7 +67,6 @@ class Database:
         self._conn.commit()
 
     def close(self) -> None:
-        """Commit, encrypt temp file back to .enc, and shred temp."""
         if self._conn is not None:
             try:
                 self._conn.commit()
@@ -84,8 +79,16 @@ class Database:
             data = self._plain_path.read_bytes()
             self.enc_path.write_bytes(_fernet().encrypt(data))
 
+        # Secure shred of the temp plaintext DB
         if self._tmp_dir and os.path.isdir(self._tmp_dir):
-            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            for root, _, files in os.walk(self._tmp_dir, topdown=False):
+                for name in files:
+                    secure_shred(os.path.join(root, name))
+                try:
+                    os.rmdir(root)
+                except OSError:
+                    pass
+
         self._tmp_dir = None
         self._plain_path = None
 
@@ -99,7 +102,6 @@ class Database:
 
     @contextmanager
     def cursor(self):
-        """Context manager: yields a cursor, commits on success, rolls back on error."""
         conn = self.connection
         cur = conn.cursor()
         try:
@@ -111,7 +113,7 @@ class Database:
         finally:
             cur.close()
 
-    # ---------- context manager support ----------
+    # ---------- context manager ----------
 
     def __enter__(self):
         self.open()

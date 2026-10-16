@@ -20,6 +20,7 @@ class TopToolbar(QFrame):
     load_single = pyqtSignal()
     load_bulk = pyqtSignal()
     load_target_b = pyqtSignal()
+    reset_session = pyqtSignal()          # ← NEW
     toggle_theme = pyqtSignal()
     open_filters = pyqtSignal()
     search_changed = pyqtSignal(str)
@@ -43,9 +44,10 @@ class TopToolbar(QFrame):
         self.search.setMaximumWidth(360)
         self.search.textChanged.connect(self.search_changed.emit)
 
-        # Filters (opens drawer)
+        # Filters
         btn_filters = QToolButton()
         btn_filters.setText("⚙  Filters")
+        btn_filters.setToolTip("Filter records by date, time, or phone")
         btn_filters.clicked.connect(self.open_filters.emit)
 
         # Primary action
@@ -61,6 +63,16 @@ class TopToolbar(QFrame):
         btn_target_b = QToolButton()
         btn_target_b.setText("Target B")
         btn_target_b.clicked.connect(self.load_target_b.emit)
+
+        # Reset session button (danger-styled)
+        btn_reset = QToolButton()
+        btn_reset.setText("🔄  Reset")
+        btn_reset.setToolTip("Clear all loaded data (Ctrl+Shift+R)")
+        btn_reset.setStyleSheet(
+            "QToolButton { padding: 6px 10px; }"
+            "QToolButton:hover { background: #FEE2E2; color: #991B1B; }"
+        )
+        btn_reset.clicked.connect(self.reset_session.emit)
 
         # Font size controls
         btn_font_minus = QToolButton()
@@ -90,6 +102,7 @@ class TopToolbar(QFrame):
         layout.addWidget(btn_single)
         layout.addWidget(btn_bulk)
         layout.addWidget(btn_target_b)
+        layout.addWidget(btn_reset)
         layout.addWidget(btn_font_minus)
         layout.addWidget(btn_font_plus)
         layout.addWidget(btn_theme)
