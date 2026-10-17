@@ -40,22 +40,36 @@ def build_call_graph(df: pd.DataFrame) -> nx.Graph:
 
 
 def centrality_table(g: nx.Graph) -> pd.DataFrame:
-    """Return a DataFrame of degree centrality per phone number.
-
-    Degree centrality = fraction of nodes each node is directly connected to.
-    Higher score = more central communicator.
-    """
+    """Return multiple mathematical centrality metrics for each node."""
     if g.number_of_nodes() == 0:
-        return pd.DataFrame(columns=["Phone Number", "Centrality"])
+        return pd.DataFrame(columns=["Phone Number", "Degree", "Betweenness", "Eigenvector"])
 
-    scores = nx.degree_centrality(g)
-    df = pd.DataFrame(
-        [
-            {"Phone Number": node, "Centrality": round(score, 4)}
-            for node, score in scores.items()
-        ]
-    )
-    return df.sort_values("Centrality", ascending=False).reset_index(drop=True)
+    # 1. Degree: How many people they called (Standard)
+    degree = nx.degree_centrality(g)
+
+    # 2. Betweenness: The "Broker" who connects different groups
+    betweenness = nx.betweenness_centrality(g)
+
+    # 3. Eigenvector: The "Hidden Boss" (connected to powerful people)
+    # We use try/except because Eigenvector math fails on disconnected graphs
+    try:
+        eigenvector = nx.eigenvector_centrality(g, max_iter=1000)
+    except nx.PowerIterationFailedConvergence:
+        eigenvector = {node: 0.0 for node in g.nodes()}
+
+    # Combine all three into a DataFrame
+    df = pd.DataFrame([
+        {
+            "Phone Number": node,
+            "Degree": round(degree.get(node, 0), 4),
+            "Betweenness": round(betweenness.get(node, 0), 4),
+            "Eigenvector": round(eigenvector.get(node, 0), 4)
+        }
+        for node in g.nodes()
+    ])
+
+    # Sort by Betweenness (Brokers first) — The most important metric in forensics!
+    return df.sort_values("Betweenness", ascending=False).reset_index(drop=True)
 
 
 def top_edges(g: nx.Graph, limit: int = 20) -> pd.DataFrame:
