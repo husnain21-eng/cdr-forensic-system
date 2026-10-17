@@ -7,7 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
-
+## [3.0.0] — 2026-10-17
+### Added
+- **Markov Chains (Probability):** Added a predictive model to the Dashboard to forecast the target's next most likely phone call based on a Transition Probability Matrix.
+- **Spectral Clustering (Linear Algebra):** Added community detection to the Network tab using Greedy Modularity Optimization to color-code distinct sub-groups.
+- **Z-Scores (Statistics):** Added statistical anomaly detection to flag abnormal daily call volumes.
+- **Haversine Formula (Trigonometry):** Replaced flat distance with accurate spherical Earth distance in meters for co-location mapping.
+- **Betweenness & Eigenvector Centrality (Graph Theory):** Upgraded network analysis to find "brokers" and "hidden influencers."
+- **Section Printing:** Added a right-click context menu to print specific UI cards and charts (Ctrl+Shift+P).
 ## [1.0.0] — 2026-10-16
 
 ### Added

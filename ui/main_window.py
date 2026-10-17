@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pandas as pd
 from PyQt5.QtCore import QEvent, QTimer, Qt
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QCursor
 from PyQt5.QtWidgets import (
     QApplication,
     QFileDialog,
+    QGroupBox,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -40,6 +42,7 @@ from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
 
 # --- UI Components ---
+from ui.components.data_table import DataTable
 from ui.components.print_helper import print_widget
 from ui.components.toolbar import TopToolbar
 from ui.components.toast import toast
@@ -160,6 +163,9 @@ class MainWindow(QMainWindow):
         self._wire_toolbar()
         self._apply_theme()
 
+        # This activates the right-click printing feature
+        self._install_section_printing()
+
     def _install_print_corner_button(self) -> None:
         self.print_btn = QPushButton("🖨  Print Tab")
         self.print_btn.setToolTip("Print the current tab (Ctrl+P)")
@@ -220,7 +226,7 @@ class MainWindow(QMainWindow):
         sb.addPermanentWidget(self.lock_label)
 
     # ============================================================
-    # PRINT
+    # PRINTING (Full Tab + Specific Sections)
     # ============================================================
 
     def _on_print_current_tab(self) -> None:
@@ -240,6 +246,51 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Printed: {tab_name}")
         except Exception as e:
             log.exception("Print failed.")
+            QMessageBox.critical(self, "Print error", str(e))
+
+    def _install_section_printing(self) -> None:
+        """Attach a right-click print menu to all GroupBoxes and Tables."""
+        for group_box in self.findChildren(QGroupBox):
+            group_box.setContextMenuPolicy(Qt.CustomContextMenu)
+            group_box.customContextMenuRequested.connect(
+                lambda pos, w=group_box: self._show_print_menu(pos, w)
+            )
+            group_box.setToolTip("Right-click to print this section")
+
+        for table in self.findChildren(DataTable):
+            table.setContextMenuPolicy(Qt.CustomContextMenu)
+            table.customContextMenuRequested.connect(
+                lambda pos, w=table: self._show_print_menu(pos, w)
+            )
+            table.setToolTip("Right-click to print this table")
+
+    def _show_print_menu(self, pos, widget: QWidget) -> None:
+        """Show the right-click context menu."""
+        menu = QMenu(self)
+        print_action = menu.addAction("🖨 Print this Section")
+        action = menu.exec_(widget.mapToGlobal(pos))
+
+        if action == print_action:
+            self._on_print_section(widget)
+
+    def _print_under_cursor(self) -> None:
+        """Print whatever section the mouse is currently hovering over."""
+        widget = QApplication.widgetAt(QCursor.pos())
+        while widget is not None:
+            if isinstance(widget, (QGroupBox, DataTable)):
+                self._on_print_section(widget)
+                return
+            widget = widget.parentWidget()
+
+    def _on_print_section(self, widget: QWidget) -> None:
+        """Print a specific widget (sub-section)."""
+        try:
+            printed = print_widget(widget, parent=self, landscape=True)
+            if printed:
+                toast(self, "Section sent to printer", tone="success")
+                self.status_label.setText("Section printed.")
+        except Exception as e:
+            log.exception("Section print failed.")
             QMessageBox.critical(self, "Print error", str(e))
 
     # ============================================================
@@ -580,10 +631,10 @@ class MainWindow(QMainWindow):
             # 1. Graph Theory
             g = build_call_graph(df)
             centrality = centrality_table(g)
-            communities = detect_communities(g)  # <--- Spectral Clustering
+            communities = detect_communities(g)
 
             # 2. Prediction & Connections
-            markov_preds = predict_next_call(df)  # <--- Markov Chain
+            markov_preds = predict_next_call(df)
             mutual = mutual_contacts(df, self.df_b) if not self.df_b.empty else None
 
             # 3. Risk & Anomalies
@@ -591,7 +642,7 @@ class MainWindow(QMainWindow):
             anom_summary = summary(df)
             short = short_calls(df)
             night = night_calls(df)
-            stat_anoms = statistical_anomalies(df)  # <--- Z-Scores
+            stat_anoms = statistical_anomalies(df)
 
             # Update Tabs
             self.tab_dashboard.update_data(df, risk, anom_summary, markov_preds)
@@ -705,6 +756,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+P"), self, activated=self._on_print_current_tab)
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self._on_open_filters)
         QShortcut(QKeySequence("Ctrl+Shift+R"), self, activated=self._on_reset_session)
+        QShortcut(QKeySequence("Ctrl+Shift+P"), self, activated=self._print_under_cursor)
 
     # ============================================================
     # LIFECYCLE

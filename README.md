@@ -47,7 +47,7 @@ an HMAC-signed, hash-chained entry in a tamper-evident audit table.
 | 🔍 **Advanced filters** | Filter by date/time range and phone number |
 | 🚀 **Bulk loading** | Load and combine multiple CDR files |
 | 🔄 **Reset session** | Clear all loaded data with a single click |
-
+| 🧠 **Advanced Mathematics** | Markov Chains (Prediction), Spectral Clustering (Community Detection), Z-Scores (Statistics), Haversine (Trigonometry), and Graph Theory (Centrality) |
 ---
 
 ## Architecture
