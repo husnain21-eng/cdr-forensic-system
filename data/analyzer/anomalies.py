@@ -60,3 +60,39 @@ def summary(df: pd.DataFrame) -> dict[str, int | float]:
         "short_pct": round(100 * shorts / total, 2) if total else 0.0,
         "night_pct": round(100 * nights / total, 2) if total else 0.0,
     }
+
+
+def statistical_anomalies(df: pd.DataFrame) -> pd.DataFrame:
+    """Find call volume anomalies using Z-Scores per target per day.
+
+    Mathematical formula: Z = (X - mean) / std
+    We flag days where the Z-score is greater than 2.5 (95% confidence).
+    """
+    if df.empty or "timestamp" not in df.columns or "party_a" not in df.columns:
+        return df.iloc[0:0]
+
+    work = df.dropna(subset=["timestamp", "party_a"]).copy()
+    work["date"] = work["timestamp"].dt.date
+
+    # 1. Count calls per target per day
+    daily_counts = work.groupby(["party_a", "date"]).size().reset_index(name="call_count")
+
+    # 2. Calculate mean and standard deviation for each target
+    stats = daily_counts.groupby("party_a")["call_count"].agg(["mean", "std"]).reset_index()
+    daily_counts = daily_counts.merge(stats, on="party_a")
+
+    # 3. Calculate Z-Score (using max(std, 1) to prevent division by zero)
+    daily_counts["z_score"] = (
+            (daily_counts["call_count"] - daily_counts["mean"]) /
+            daily_counts["std"].apply(lambda x: max(x, 1.0) if pd.notna(x) else 1.0)
+    )
+
+    # 4. Filter for anomalies where Z > 2.5
+    anomalies = daily_counts[daily_counts["z_score"] > 2.5].copy()
+
+    # Round the columns for display
+    anomalies["mean"] = anomalies["mean"].round(1)
+    anomalies["std"] = anomalies["std"].round(1)
+    anomalies["z_score"] = anomalies["z_score"].round(2)
+
+    return anomalies.sort_values("z_score", ascending=False).reset_index(drop=True)
