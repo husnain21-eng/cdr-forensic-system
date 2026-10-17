@@ -27,7 +27,7 @@ from core.audit import AuditTrail
 from core.constants import IDLE_TIMEOUT_SECONDS
 from core.database import Database
 from core.settings import MAX_FONT_SIZE, MIN_FONT_SIZE
-from data.analyzer.anomalies import night_calls, short_calls, summary
+from data.analyzer.anomalies import night_calls, short_calls, summary, statistical_anomalies
 from data.analyzer.colocation import colocation_events
 from data.analyzer.graph import build_call_graph, centrality_table
 from data.analyzer.mutual import mutual_contacts
@@ -50,7 +50,6 @@ from ui.theme.palette import DARK, LIGHT
 from ui.theme.stylesheet import stylesheet
 
 log = logging.getLogger(__name__)
-
 
 TAB_ITEMS = [
     "◉  Dashboard",
@@ -277,7 +276,7 @@ class MainWindow(QMainWindow):
             df = df[
                 df["party_a"].astype(str).str.contains(phone, na=False)
                 | df["party_b"].astype(str).str.contains(phone, na=False)
-            ]
+                ]
 
         # Date/time range filter
         if state.get("use_date") and "timestamp" in df.columns:
@@ -287,7 +286,7 @@ class MainWindow(QMainWindow):
                 df = df[
                     (df["timestamp"] >= pd.Timestamp(dt_from))
                     & (df["timestamp"] <= pd.Timestamp(dt_to))
-                ]
+                    ]
 
         self.df_a = df.reset_index(drop=True)
         self._refresh_all()
@@ -635,10 +634,16 @@ class MainWindow(QMainWindow):
             short = short_calls(df)
             night = night_calls(df)
 
+            # FIXED: Made variable plural to match the call below
+            stat_anoms = statistical_anomalies(df)
+
             self.tab_dashboard.update_data(df, risk, anom_summary)
             self.tab_network.update_data(g, centrality, mutual)
             self.tab_map.update_data(df)
-            self.tab_anomalies.update_data(short, night, anom_summary)
+
+            # FIXED: Using stat_anoms here
+            self.tab_anomalies.update_data(short, night, anom_summary, stat_anoms)
+
             self.tab_report.update_data(df, risk)
             self.tab_inspector.update_data(df)
             self.tab_database.refresh()
@@ -699,7 +704,7 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event) -> bool:
         if event.type() in (
-            QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress,
+                QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress,
         ):
             self._idle_seconds = 0
         return super().eventFilter(obj, event)
