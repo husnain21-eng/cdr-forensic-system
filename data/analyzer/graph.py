@@ -1,7 +1,4 @@
-"""Contact network construction and centrality analysis.
-
-Pure functions — no UI, no globals. Takes a DataFrame, returns objects.
-"""
+"""Contact network construction and centrality analysis."""
 from __future__ import annotations
 
 import networkx as nx
@@ -9,13 +6,7 @@ import pandas as pd
 
 
 def build_call_graph(df: pd.DataFrame) -> nx.Graph:
-    """Build an undirected weighted graph where:
-      - nodes = phone numbers
-      - edges = at least one call between them
-      - edge weight = number of calls
-
-    Rows with missing party_a or party_b are silently skipped.
-    """
+    """Build an undirected weighted graph where nodes = phone numbers."""
     g = nx.Graph()
     if df.empty or "party_a" not in df.columns or "party_b" not in df.columns:
         return g
@@ -24,18 +15,10 @@ def build_call_graph(df: pd.DataFrame) -> nx.Graph:
     if pairs.empty:
         return g
 
-    counts = (
-        pairs.groupby(["party_a", "party_b"])
-             .size()
-             .reset_index(name="weight")
-    )
+    counts = pairs.groupby(["party_a", "party_b"]).size().reset_index(name="weight")
 
     for _, row in counts.iterrows():
-        g.add_edge(
-            str(row["party_a"]),
-            str(row["party_b"]),
-            weight=int(row["weight"]),
-        )
+        g.add_edge(str(row["party_a"]), str(row["party_b"]), weight=int(row["weight"]))
     return g
 
 
@@ -44,20 +27,14 @@ def centrality_table(g: nx.Graph) -> pd.DataFrame:
     if g.number_of_nodes() == 0:
         return pd.DataFrame(columns=["Phone Number", "Degree", "Betweenness", "Eigenvector"])
 
-    # 1. Degree: How many people they called (Standard)
     degree = nx.degree_centrality(g)
-
-    # 2. Betweenness: The "Broker" who connects different groups
     betweenness = nx.betweenness_centrality(g)
 
-    # 3. Eigenvector: The "Hidden Boss" (connected to powerful people)
-    # We use try/except because Eigenvector math fails on disconnected graphs
     try:
         eigenvector = nx.eigenvector_centrality(g, max_iter=1000)
     except nx.PowerIterationFailedConvergence:
         eigenvector = {node: 0.0 for node in g.nodes()}
 
-    # Combine all three into a DataFrame
     df = pd.DataFrame([
         {
             "Phone Number": node,
@@ -68,7 +45,6 @@ def centrality_table(g: nx.Graph) -> pd.DataFrame:
         for node in g.nodes()
     ])
 
-    # Sort by Betweenness (Brokers first) — The most important metric in forensics!
     return df.sort_values("Betweenness", ascending=False).reset_index(drop=True)
 
 
@@ -83,3 +59,19 @@ def top_edges(g: nx.Graph, limit: int = 20) -> pd.DataFrame:
     ]
     df = pd.DataFrame(edges)
     return df.sort_values("Calls", ascending=False).head(limit).reset_index(drop=True)
+
+
+def detect_communities(g: nx.Graph) -> dict[str, int]:
+    """Detect communities using Greedy Modularity Optimization."""
+    if g.number_of_nodes() == 0:
+        return {}
+
+    try:
+        communities = nx.community.greedy_modularity_communities(g)
+        community_map = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                community_map[node] = i
+        return community_map
+    except Exception:
+        return {node: 0 for node in g.nodes()}

@@ -27,15 +27,19 @@ from core.audit import AuditTrail
 from core.constants import IDLE_TIMEOUT_SECONDS
 from core.database import Database
 from core.settings import MAX_FONT_SIZE, MIN_FONT_SIZE
-from data.analyzer import markov
+
+# --- Data Analyzers ---
 from data.analyzer.anomalies import night_calls, short_calls, summary, statistical_anomalies
 from data.analyzer.colocation import colocation_events
-from data.analyzer.graph import build_call_graph, centrality_table
-from data.analyzer.mutual import mutual_contacts
+from data.analyzer.graph import build_call_graph, centrality_table, detect_communities
 from data.analyzer.markov import predict_next_call
+from data.analyzer.mutual import mutual_contacts
 from data.analyzer.risk import compute_risk
+
 from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
+
+# --- UI Components ---
 from ui.components.print_helper import print_widget
 from ui.components.toolbar import TopToolbar
 from ui.components.toast import toast
@@ -83,7 +87,7 @@ class MainWindow(QMainWindow):
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
 
-        # Active filter state (so we can re-apply on reload)
+        # Active filter state
         self._filter_state: dict = {
             "phone": "",
             "use_date": False,
@@ -259,12 +263,10 @@ class MainWindow(QMainWindow):
         self.audit.log(
             self.current_user, self.current_role,
             "APPLY_FILTER",
-            f"phone='{values['phone']}', "
-            f"date_range={values['use_date']}",
+            f"phone='{values['phone']}', date_range={values['use_date']}",
         )
 
     def _apply_filter(self) -> None:
-        """Apply the current filter state to df_raw_a and refresh tabs."""
         if self.df_raw_a.empty:
             toast(self, "No data to filter", tone="warning")
             return
@@ -272,7 +274,6 @@ class MainWindow(QMainWindow):
         df = self.df_raw_a.copy()
         state = self._filter_state
 
-        # Phone filter (contains match on party_a OR party_b)
         phone = state.get("phone", "")
         if phone:
             df = df[
@@ -280,7 +281,6 @@ class MainWindow(QMainWindow):
                 | df["party_b"].astype(str).str.contains(phone, na=False)
                 ]
 
-        # Date/time range filter
         if state.get("use_date") and "timestamp" in df.columns:
             dt_from = state.get("from")
             dt_to = state.get("to")
@@ -297,24 +297,12 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 f"Filtered: {len(self.df_a):,} of {len(self.df_raw_a):,} records"
             )
-            toast(
-                self,
-                f"Filtered to {len(self.df_a):,} records",
-                tone="info",
-            )
+            toast(self, f"Filtered to {len(self.df_a):,} records", tone="info")
         else:
-            self.status_label.setText(
-                f"{len(self.df_a):,} records (no filter applied)"
-            )
+            self.status_label.setText(f"{len(self.df_a):,} records (no filter applied)")
 
     def _clear_filter(self) -> None:
-        """Reset all filters and show the full dataset."""
-        self._filter_state = {
-            "phone": "",
-            "use_date": False,
-            "from": None,
-            "to": None,
-        }
+        self._filter_state = {"phone": "", "use_date": False, "from": None, "to": None}
         self.df_a = self.df_raw_a.copy()
         self._refresh_all()
         toast(self, "Filters cleared", tone="info")
@@ -329,13 +317,10 @@ class MainWindow(QMainWindow):
             return
 
         ok = confirm(
-            self,
-            "Reset Session?",
+            self, "Reset Session?",
             "All loaded CDR data will be cleared from memory. "
-            "The audit trail and user accounts are preserved. "
-            "This cannot be undone.",
-            danger=True,
-            ok_text="Reset Session",
+            "The audit trail and user accounts are preserved. This cannot be undone.",
+            danger=True, ok_text="Reset Session",
         )
         if not ok:
             return
@@ -344,14 +329,8 @@ class MainWindow(QMainWindow):
         self.df_raw_b = pd.DataFrame()
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
-        self._filter_state = {
-            "phone": "",
-            "use_date": False,
-            "from": None,
-            "to": None,
-        }
+        self._filter_state = {"phone": "", "use_date": False, "from": None, "to": None}
 
-        # Reset each tab to its empty state
         self.tab_dashboard.clear()
         self.tab_network.clear()
         self.tab_map.clear()
@@ -362,11 +341,7 @@ class MainWindow(QMainWindow):
 
         self.status_label.setText("Session reset — no data loaded.")
         self.toolbar.search.clear()
-
-        self.audit.log(
-            self.current_user, self.current_role,
-            "RESET_SESSION", "Cleared all loaded CDR data.",
-        )
+        self.audit.log(self.current_user, self.current_role, "RESET_SESSION", "Cleared all loaded CDR data.")
         toast(self, "Session reset", tone="success")
 
     # ============================================================
@@ -411,8 +386,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_single(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open CDR file", "",
-            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+            self, "Open CDR file", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
         )
         if not path:
             return
@@ -420,8 +394,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_bulk(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Open multiple CDR files", "",
-            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+            self, "Open multiple CDR files", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
         )
         if not paths:
             return
@@ -429,8 +402,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_target_b(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Target B CDR", "",
-            "CDR Files (*.csv *.xlsx *.xls);;All Files (*)",
+            self, "Open Target B CDR", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
         )
         if not path:
             return
@@ -454,16 +426,12 @@ class MainWindow(QMainWindow):
             self.df_raw_b = df
             self.df_b = df.copy()
 
-        # Auto-populate filter date range from data
         if target == "A" and "timestamp" in df.columns and df["timestamp"].notna().any():
             self._filter_state["from"] = df["timestamp"].min().to_pydatetime()
             self._filter_state["to"] = df["timestamp"].max().to_pydatetime()
 
         label = f"Target {target}: {len(df):,} records"
-        self.audit.log(
-            self.current_user, self.current_role,
-            f"LOAD_{target}", f"{label} from {path}",
-        )
+        self.audit.log(self.current_user, self.current_role, f"LOAD_{target}", f"{label} from {path}")
         toast(self, label + " loaded", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
@@ -475,9 +443,7 @@ class MainWindow(QMainWindow):
         frames = []
         errors = []
         for i, p in enumerate(paths, start=1):
-            self._update_progress(
-                i, f"Loading {i} of {total}: {Path(p).name}"
-            )
+            self._update_progress(i, f"Loading {i} of {total}: {Path(p).name}")
             try:
                 frames.append(load_single_file(p))
             except Exception as e:
@@ -485,10 +451,7 @@ class MainWindow(QMainWindow):
 
         if not frames:
             self._hide_progress()
-            QMessageBox.critical(
-                self, "Bulk load failed",
-                "None of the files could be loaded.\n\n" + "\n".join(errors),
-            )
+            QMessageBox.critical(self, "Bulk load failed", "None of the files could be loaded.\n\n" + "\n".join(errors))
             return
 
         self._update_progress(total, "Combining files…")
@@ -505,10 +468,7 @@ class MainWindow(QMainWindow):
             self._filter_state["to"] = combined["timestamp"].max().to_pydatetime()
 
         label = f"Bulk: {total} files, {len(combined):,} records"
-        self.audit.log(
-            self.current_user, self.current_role,
-            "LOAD_BULK", label,
-        )
+        self.audit.log(self.current_user, self.current_role, "LOAD_BULK", label)
         toast(self, label + " loaded", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
@@ -536,10 +496,7 @@ class MainWindow(QMainWindow):
                 show_triangulation=self.tab_map.triangulation_enabled(),
             )
             self._hide_progress()
-            self.audit.log(
-                self.current_user, self.current_role,
-                "OPEN_MAP", f"Map opened: {out}",
-            )
+            self.audit.log(self.current_user, self.current_role, "OPEN_MAP", f"Map opened: {out}")
             toast(self, "Map opened in browser", tone="success")
             self.status_label.setText("Map opened in browser.")
         except ValueError as e:
@@ -572,13 +529,11 @@ class MainWindow(QMainWindow):
             df = self.df_a
             risk = compute_risk(df)
             top = (
-                df["party_b"].dropna().astype(str)
-                .value_counts().head(20)
+                df["party_b"].dropna().astype(str).value_counts().head(20)
                 if "party_b" in df.columns else pd.Series(dtype=int)
             )
             towers = (
-                df["cell_id"].dropna().astype(str)
-                .value_counts().head(20)
+                df["cell_id"].dropna().astype(str).value_counts().head(20)
                 if "cell_id" in df.columns else pd.Series(dtype=int)
             )
 
@@ -595,10 +550,7 @@ class MainWindow(QMainWindow):
                 towers=list(towers.items()),
             )
             self._hide_progress()
-            self.audit.log(
-                self.current_user, self.current_role,
-                "EXPORT_PDF", str(path),
-            )
+            self.audit.log(self.current_user, self.current_role, "EXPORT_PDF", str(path))
             toast(self, "PDF saved", tone="success")
             self.status_label.setText(f"PDF saved: {path}")
         except Exception as e:
@@ -625,28 +577,27 @@ class MainWindow(QMainWindow):
 
         df = self.df_a
         try:
+            # 1. Graph Theory
             g = build_call_graph(df)
             centrality = centrality_table(g)
-            mutual = (
-                mutual_contacts(df, self.df_b)
-                if not self.df_b.empty else None
-            )
+            communities = detect_communities(g)  # <--- Spectral Clustering
+
+            # 2. Prediction & Connections
+            markov_preds = predict_next_call(df)  # <--- Markov Chain
+            mutual = mutual_contacts(df, self.df_b) if not self.df_b.empty else None
+
+            # 3. Risk & Anomalies
             risk = compute_risk(df)
             anom_summary = summary(df)
             short = short_calls(df)
             night = night_calls(df)
+            stat_anoms = statistical_anomalies(df)  # <--- Z-Scores
 
-            # FIXED: Made variable plural to match the call below
-            stat_anoms = statistical_anomalies(df)
-            markov_preds = predict_next_call(df)
-
+            # Update Tabs
             self.tab_dashboard.update_data(df, risk, anom_summary, markov_preds)
-            self.tab_network.update_data(g, centrality, mutual)
+            self.tab_network.update_data(g, centrality, mutual, communities)
             self.tab_map.update_data(df)
-
-            # FIXED: Using stat_anoms here
             self.tab_anomalies.update_data(short, night, anom_summary, stat_anoms)
-
             self.tab_report.update_data(df, risk)
             self.tab_inspector.update_data(df)
             self.tab_database.refresh()
@@ -706,19 +657,14 @@ class MainWindow(QMainWindow):
             self._auto_lock()
 
     def eventFilter(self, obj, event) -> bool:
-        if event.type() in (
-                QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress,
-        ):
+        if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.KeyPress):
             self._idle_seconds = 0
         return super().eventFilter(obj, event)
 
     def _auto_lock(self) -> None:
         log.info("Auto-lock triggered.")
         try:
-            self.audit.log(
-                self.current_user, self.current_role,
-                "AUTO_LOCK", "Idle timeout.",
-            )
+            self.audit.log(self.current_user, self.current_role, "AUTO_LOCK", "Idle timeout.")
         except Exception:
             log.exception("Audit on auto-lock failed.")
         try:
@@ -738,13 +684,8 @@ class MainWindow(QMainWindow):
         self.tab_database._audit = self.audit
         self.current_user = login.username
         self.current_role = login.role or "Junior Analyst"
-        self.setWindowTitle(
-            f"CDR Forensic System — {self.current_user} [{self.current_role}]"
-        )
-        self.audit.log(
-            self.current_user, self.current_role,
-            "UNLOCK", "Session resumed after auto-lock.",
-        )
+        self.setWindowTitle(f"CDR Forensic System — {self.current_user} [{self.current_role}]")
+        self.audit.log(self.current_user, self.current_role, "UNLOCK", "Session resumed after auto-lock.")
         self._idle_seconds = 0
         self.show()
 
@@ -773,10 +714,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_idle_timer"):
             self._idle_timer.stop()
         try:
-            self.audit.log(
-                self.current_user, self.current_role,
-                "LOGOUT", "Session ended.",
-            )
+            self.audit.log(self.current_user, self.current_role, "LOGOUT", "Session ended.")
         except Exception:
             log.exception("Audit on close failed.")
         try:
