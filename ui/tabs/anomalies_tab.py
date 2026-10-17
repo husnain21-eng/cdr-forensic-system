@@ -1,8 +1,4 @@
-"""Anomalies tab — forensic red flags.
-
-Shows short calls, night calls, and a summary count. Dumb tab — the
-main window passes in pre-filtered DataFrames.
-"""
+"""Anomalies tab — forensic red flags including statistical Z-scores."""
 from __future__ import annotations
 
 import pandas as pd
@@ -34,15 +30,13 @@ class AnomaliesTab(QWidget):
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
 
-        # Page 0 — Empty
         self.empty = EmptyState(
             icon="🚨",
             title="No anomalies to show",
-            hint="Load a CDR file to detect short calls and night activity.",
+            hint="Load a CDR file to detect short calls, night activity, and statistical outliers.",
         )
         self.stack.addWidget(self.empty)
 
-        # Page 1 — Content
         self.content = self._build_content()
         self.stack.addWidget(self.content)
 
@@ -63,16 +57,19 @@ class AnomaliesTab(QWidget):
         self.lbl_total = self._make_stat_label("0", "Total records")
         self.lbl_short = self._make_stat_label("0", "Short calls (≤5s)")
         self.lbl_night = self._make_stat_label("0", "Night calls (23:00–05:00)")
+        self.lbl_stat = self._make_stat_label("0", "Statistical Anomalies (Z>2.5)")
 
         summary_layout.addWidget(self.lbl_total)
         summary_layout.addWidget(self.lbl_short)
         summary_layout.addWidget(self.lbl_night)
+        summary_layout.addWidget(self.lbl_stat)
         summary_layout.addStretch()
 
         layout.addWidget(summary_box)
 
-        # Two tables in a splitter
+        # Three tables in a splitter
         splitter = QSplitter(Qt.Vertical)
+        splitter.setChildrenCollapsible(False)
 
         short_box = QGroupBox("Short Calls — Possible Missed-Ping Pattern")
         short_layout = QVBoxLayout(short_box)
@@ -90,8 +87,16 @@ class AnomaliesTab(QWidget):
         night_layout.addWidget(self.tbl_night)
         splitter.addWidget(night_box)
 
-        splitter.setSizes([350, 350])
-        splitter.setChildrenCollapsible(False)
+        stat_box = QGroupBox("Statistical Anomalies — Abnormal Call Volume (Z-Score > 2.5)")
+        stat_layout = QVBoxLayout(stat_box)
+        self.tbl_stat = DataTable()
+        self.model_stat = PandasModel()
+        self.tbl_stat.setModel(self.model_stat)
+        stat_layout.addWidget(self.tbl_stat)
+        splitter.addWidget(stat_box)
+
+        # Give them equal height
+        splitter.setSizes([250, 250, 250])
         layout.addWidget(splitter, 1)
 
         return page
@@ -100,12 +105,12 @@ class AnomaliesTab(QWidget):
         """Create a large-number + small-caption stat block."""
         w = QWidget()
         layout = QVBoxLayout(w)
-        layout.setContentsMargins(8, 4, 24, 4)
+        layout.setContentsMargins(8, 4, 16, 4)
         layout.setSpacing(0)
 
         value_label = QLabel(value)
         value_label.setStyleSheet(
-            "font-size: 24px; font-weight: 700; color: #111827;"
+            "font-size: 20px; font-weight: 700; color: #111827;"
         )
         value_label.setObjectName("value")
 
@@ -117,37 +122,40 @@ class AnomaliesTab(QWidget):
         layout.addWidget(value_label)
         layout.addWidget(caption_label)
 
-        # Store value label on the parent for later updates
         w._value_label = value_label  # type: ignore[attr-defined]
         return w
 
     # ---------- public API ----------
 
     def update_data(
-        self,
-        short_df: pd.DataFrame,
-        night_df: pd.DataFrame,
-        summary: dict,
+            self,
+            short_df: pd.DataFrame,
+            night_df: pd.DataFrame,
+            summary: dict,
+            stat_df: pd.DataFrame | None = None,
     ) -> None:
-        """Refresh the tab.
+        """Refresh the tab with new data."""
 
-        Args:
-            short_df: Rows from data.analyzer.anomalies.short_calls.
-            night_df: Rows from data.analyzer.anomalies.night_calls.
-            summary: Dict from data.analyzer.anomalies.summary.
-        """
-        # Summary counts
+        # Update summary counts
         self.lbl_total._value_label.setText(f"{summary.get('total', 0):,}")  # type: ignore[attr-defined]
         self.lbl_short._value_label.setText(f"{summary.get('short_calls', 0):,}")  # type: ignore[attr-defined]
         self.lbl_night._value_label.setText(f"{summary.get('night_calls', 0):,}")  # type: ignore[attr-defined]
 
-        # Tables
-        self.model_short.set_dataframe(
-            self._filter_columns(short_df)
-        )
-        self.model_night.set_dataframe(
-            self._filter_columns(night_df)
-        )
+        if stat_df is not None:
+            self.lbl_stat._value_label.setText(f"{len(stat_df):,}")  # type: ignore[attr-defined]
+        else:
+            self.lbl_stat._value_label.setText("0")  # type: ignore[attr-defined]
+
+        # Update tables
+        self.model_short.set_dataframe(self._filter_columns(short_df))
+        self.model_night.set_dataframe(self._filter_columns(night_df))
+
+        if stat_df is not None and not stat_df.empty:
+            self.model_stat.set_dataframe(stat_df)
+        else:
+            self.model_stat.set_dataframe(
+                pd.DataFrame(columns=["party_a", "date", "call_count", "mean", "std", "z_score"])
+            )
 
         self.stack.setCurrentIndex(1)
 

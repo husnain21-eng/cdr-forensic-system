@@ -1,24 +1,11 @@
-"""Dashboard tab — the landing page after login.
-
-Layout (top → bottom):
-  1. Top Interlocutors chart (full width)
-  2. Risk Assessment + Anomaly Summary side by side
-
-Vertical stacking means neither the chart nor the text cards get
-squeezed horizontally at any font size.
-"""
+"""Dashboard tab — the landing page after login."""
 from __future__ import annotations
 
 import pandas as pd
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QStackedWidget,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QStackedWidget,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -48,162 +35,126 @@ class DashboardTab(QWidget):
 
         self.content = self._build_content()
         self.stack.addWidget(self.content)
-
         self.stack.setCurrentIndex(0)
-
-    # ---------- UI ----------
 
     def _build_content(self) -> QWidget:
         page = QWidget()
-        page.setMinimumWidth(700)
+        page.setMinimumWidth(800)
         page.setMinimumHeight(560)
 
         layout = QVBoxLayout(page)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
 
-        # --- TOP: chart (full width) ---
+        # --- TOP: chart ---
         chart_box = QGroupBox("Top Interlocutors")
         chart_layout = QVBoxLayout(chart_box)
-        chart_layout.setContentsMargins(8, 8, 8, 8)
-
-        self.canvas = FigureCanvasQTAgg(Figure(figsize=(9, 4), dpi=90))
-        self.canvas.setMinimumHeight(340)
+        self.canvas = FigureCanvasQTAgg(Figure(figsize=(9, 3.5), dpi=90))
+        self.canvas.setMinimumHeight(280)
         self.ax = self.canvas.figure.add_subplot(111)
         chart_layout.addWidget(self.canvas)
-
         layout.addWidget(chart_box, 3)
 
-        # --- BOTTOM: Risk + Anomalies side by side ---
+        # --- BOTTOM: 3 Cards ---
         bottom = QHBoxLayout()
         bottom.setSpacing(12)
 
-        # --- Risk card ---
+        # 1. Risk card
         risk_box = QGroupBox("Risk Assessment")
-        risk_box.setMinimumWidth(320)
         risk_layout = QVBoxLayout(risk_box)
-        risk_layout.setContentsMargins(12, 16, 12, 12)
-        risk_layout.setSpacing(6)
-
         self.lbl_score = QLabel("—")
-        self.lbl_score.setStyleSheet(
-            "font-size: 28px; font-weight: 700; color: #374151;"
-        )
-        self.lbl_score.setWordWrap(True)
-
+        self.lbl_score.setStyleSheet("font-size: 26px; font-weight: 700; color: #374151;")
         self.lbl_level = QLabel("—")
-        self.lbl_level.setStyleSheet(
-            "font-size: 14px; font-weight: 600; color: #6B7280;"
-        )
-        self.lbl_level.setWordWrap(True)
-
+        self.lbl_level.setStyleSheet("font-size: 14px; font-weight: 600; color: #6B7280;")
         self.txt_rationale = QTextEdit()
         self.txt_rationale.setReadOnly(True)
-        self.txt_rationale.setMinimumHeight(120)
-        self.txt_rationale.setStyleSheet(
-            "font-size: 12px; color: #4B5563;"
-            "background: #F9FAFB;"
-            "border: 1px solid #E5E7EB;"
-            "border-radius: 6px;"
-        )
-
+        self.txt_rationale.setStyleSheet("font-size: 11px; color: #4B5563; background: #F9FAFB;")
         risk_layout.addWidget(self.lbl_score)
         risk_layout.addWidget(self.lbl_level)
-        risk_layout.addWidget(self.txt_rationale, 1)
-
+        risk_layout.addWidget(self.txt_rationale)
         bottom.addWidget(risk_box, 1)
 
-        # --- Anomaly card ---
+        # 2. Anomaly card
         anom_box = QGroupBox("Anomaly Summary")
-        anom_box.setMinimumWidth(320)
         anom_layout = QVBoxLayout(anom_box)
-        anom_layout.setContentsMargins(12, 16, 12, 12)
-
         self.lbl_anomalies = QLabel("—")
         self.lbl_anomalies.setWordWrap(True)
-        self.lbl_anomalies.setTextFormat(Qt.RichText)
-        self.lbl_anomalies.setStyleSheet(
-            "font-size: 13px; color: #374151;"
-        )
-        self.lbl_anomalies.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
-        anom_layout.addWidget(self.lbl_anomalies, 1)
-
+        self.lbl_anomalies.setStyleSheet("font-size: 13px; color: #374151;")
+        anom_layout.addWidget(self.lbl_anomalies)
         bottom.addWidget(anom_box, 1)
+
+        # 3. Markov Prediction card
+        markov_box = QGroupBox("Markov Predictive Model (Next Call)")
+        markov_layout = QVBoxLayout(markov_box)
+        self.lbl_markov = QLabel("—")
+        self.lbl_markov.setWordWrap(True)
+        self.lbl_markov.setStyleSheet("font-size: 13px; color: #2563EB; font-weight: bold;")
+        self.txt_markov_details = QTextEdit()
+        self.txt_markov_details.setReadOnly(True)
+        self.txt_markov_details.setStyleSheet("font-size: 11px; color: #4B5563; background: #F9FAFB;")
+        markov_layout.addWidget(self.lbl_markov)
+        markov_layout.addWidget(self.txt_markov_details)
+        bottom.addWidget(markov_box, 1)
 
         layout.addLayout(bottom, 2)
         return page
 
-    # ---------- public API ----------
-
     def update_data(
-        self,
-        df: pd.DataFrame,
-        risk: RiskAssessment,
-        anomaly_summary: dict,
+            self,
+            df: pd.DataFrame,
+            risk: RiskAssessment,
+            anomaly_summary: dict,
+            markov_df: pd.DataFrame | None = None,
     ) -> None:
         if df.empty:
             self.stack.setCurrentIndex(0)
             return
 
-        # --- Chart ---
+        # Chart
         self.ax.clear()
         if "party_b" in df.columns:
-            top = (
-                df["party_b"]
-                .dropna()
-                .astype(str)
-                .value_counts()
-                .head(8)
-            )
+            top = df["party_b"].dropna().astype(str).value_counts().head(8)
             if not top.empty:
                 self.ax.barh(top.index, top.values, color="#2563EB")
                 self.ax.invert_yaxis()
-                self.ax.set_xlabel("Call count", fontsize=10)
-                self.ax.tick_params(axis="y", labelsize=10)
-                self.ax.tick_params(axis="x", labelsize=10)
-                for spine in ("top", "right"):
-                    self.ax.spines[spine].set_visible(False)
-                # Reserve 30% of the width for phone-number labels
-                self.canvas.figure.subplots_adjust(
-                    left=0.32, right=0.98, top=0.92, bottom=0.14
-                )
+                self.ax.tick_params(axis="both", labelsize=9)
+                self.ax.spines["top"].set_visible(False)
+                self.ax.spines["right"].set_visible(False)
+                self.canvas.figure.subplots_adjust(left=0.30, right=0.98, top=0.92, bottom=0.15)
         self.canvas.draw()
 
-        # --- Risk card ---
+        # Risk
+        colors = {"LOW": "#16A34A", "ELEVATED": "#D97706", "CRITICAL": "#DC2626", "UNKNOWN": "#6B7280"}
+        color = colors.get(risk.level, "#6B7280")
         self.lbl_score.setText(f"{risk.score} / 100")
-
-        level_colors = {
-            "LOW": "#16A34A",
-            "ELEVATED": "#D97706",
-            "CRITICAL": "#DC2626",
-            "UNKNOWN": "#6B7280",
-        }
-        color = level_colors.get(risk.level, "#6B7280")
+        self.lbl_score.setStyleSheet(f"font-size: 26px; font-weight: 700; color: {color};")
         self.lbl_level.setText(f"● {risk.level}")
-        self.lbl_level.setStyleSheet(
-            f"font-size: 14px; font-weight: 600; color: {color};"
-        )
-        self.lbl_score.setStyleSheet(
-            f"font-size: 28px; font-weight: 700; color: {color};"
-        )
-
+        self.lbl_level.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {color};")
         self.txt_rationale.setPlainText(risk.rationale)
 
-        # --- Anomaly card ---
+        # Anomalies
         total = anomaly_summary.get("total", 0)
-        short = anomaly_summary.get("short_calls", 0)
-        night = anomaly_summary.get("night_calls", 0)
-        short_pct = anomaly_summary.get("short_pct", 0.0)
-        night_pct = anomaly_summary.get("night_pct", 0.0)
-
         self.lbl_anomalies.setText(
-            f"<b>Total records:</b> {total:,}<br><br>"
-            f"<b>Short calls (≤5s):</b><br>"
-            f"{short:,} &nbsp;({short_pct}%)<br><br>"
-            f"<b>Night calls (23:00–05:00):</b><br>"
-            f"{night:,} &nbsp;({night_pct}%)"
+            f"<b>Total records:</b> {total:,}<br>"
+            f"<b>Short calls:</b> {anomaly_summary.get('short_calls', 0):,}<br>"
+            f"<b>Night calls:</b> {anomaly_summary.get('night_calls', 0):,}"
         )
+
+        # Markov Prediction
+        if markov_df is not None and not markov_df.empty:
+            top_pred = markov_df.iloc[0]
+            self.lbl_markov.setText(
+                f"Next likely call: {top_pred['Predicted Next Call']} ({top_pred['Probability (%)']}%)")
+
+            # Show top 3 in the text box
+            last_target = top_pred["Target's Last Call"]
+            details = f"Based on last call to: {last_target}\n\n"
+            for _, row in markov_df.head(3).iterrows():
+                details += f"➔ {row['Predicted Next Call']} ({row['Probability (%)']}% prob)\n"
+            self.txt_markov_details.setPlainText(details)
+        else:
+            self.lbl_markov.setText("Not enough sequential data")
+            self.txt_markov_details.setPlainText("Need more calls to build a transition matrix.")
 
         self.stack.setCurrentIndex(1)
 

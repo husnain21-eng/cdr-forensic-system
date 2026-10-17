@@ -27,10 +27,12 @@ from core.audit import AuditTrail
 from core.constants import IDLE_TIMEOUT_SECONDS
 from core.database import Database
 from core.settings import MAX_FONT_SIZE, MIN_FONT_SIZE
+from data.analyzer import markov
 from data.analyzer.anomalies import night_calls, short_calls, summary, statistical_anomalies
 from data.analyzer.colocation import colocation_events
 from data.analyzer.graph import build_call_graph, centrality_table
 from data.analyzer.mutual import mutual_contacts
+from data.analyzer.markov import predict_next_call
 from data.analyzer.risk import compute_risk
 from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
@@ -636,8 +638,9 @@ class MainWindow(QMainWindow):
 
             # FIXED: Made variable plural to match the call below
             stat_anoms = statistical_anomalies(df)
+            markov_preds = predict_next_call(df)
 
-            self.tab_dashboard.update_data(df, risk, anom_summary)
+            self.tab_dashboard.update_data(df, risk, anom_summary, markov_preds)
             self.tab_network.update_data(g, centrality, mutual)
             self.tab_map.update_data(df)
 
