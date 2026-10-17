@@ -6,6 +6,8 @@ from local file:// URLs. Markers are clustered to prevent overlap.
 from __future__ import annotations
 
 import logging
+import os
+import platform
 import tempfile
 import webbrowser
 from pathlib import Path
@@ -16,20 +18,19 @@ from folium.plugins import HeatMap, MarkerCluster
 
 log = logging.getLogger(__name__)
 
-
 # Free tiles that work from file:// without an API key
 ESRI_TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
 ESRI_ATTR = "Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS"
 
 
 def build_map(
-    df_a: pd.DataFrame,
-    df_b: pd.DataFrame | None = None,
-    colocations: pd.DataFrame | None = None,
-    *,
-    show_heatmap: bool = False,
-    show_triangulation: bool = True,
-    auto_open: bool = True,
+        df_a: pd.DataFrame,
+        df_b: pd.DataFrame | None = None,
+        colocations: pd.DataFrame | None = None,
+        *,
+        show_heatmap: bool = False,
+        show_triangulation: bool = True,
+        auto_open: bool = True,
 ) -> Path:
     """Build a Folium map and (optionally) open it in the default browser.
 
@@ -109,15 +110,17 @@ def build_map(
 
     # --- Co-location stars ---
     if colocations is not None and not colocations.empty:
-        unique_coloc = _dedupe_points(colocations, precision=5)
         cluster_c = MarkerCluster(name="Co-location").add_to(m)
-        for _, row in unique_coloc.head(500).iterrows():
+
+        # We do NOT use _dedupe_points here, because we need to keep the
+        # delta_sec and distance_meters columns for the popup!
+        for _, row in colocations.head(200).iterrows():
             folium.Marker(
                 location=[row["lat"], row["lon"]],
                 popup=(
                     f"<b>⭐ Possible co-location</b><br>"
                     f"Δt = {row['delta_sec']:.0f}s<br>"
-                    f"dist ≈ {row['distance_deg']:.4f}°"
+                    f"dist ≈ {row['distance_meters']:.1f} m"
                 ),
                 icon=folium.Icon(color="orange", icon="star"),
             ).add_to(cluster_c)
@@ -129,7 +132,15 @@ def build_map(
     log.info("Map saved to %s", out)
 
     if auto_open:
-        webbrowser.open(f"file:///{out}")
+        # Use Windows native launcher (more reliable than webbrowser module)
+        if platform.system() == "Windows":
+            try:
+                os.startfile(out)
+            except Exception as e:
+                log.error("os.startfile failed: %s", e)
+                webbrowser.open(f"file:///{out}")
+        else:
+            webbrowser.open(f"file:///{out}")
 
     return out
 
@@ -153,9 +164,9 @@ def _dedupe_points(df: pd.DataFrame, precision: int = 5) -> pd.DataFrame:
     work["lon_r"] = work["lon"].round(precision)
     grouped = (
         work.groupby(["lat_r", "lon_r"])
-            .size()
-            .reset_index(name="count")
-            .rename(columns={"lat_r": "lat", "lon_r": "lon"})
+        .size()
+        .reset_index(name="count")
+        .rename(columns={"lat_r": "lat", "lon_r": "lon"})
     )
     return grouped
 
