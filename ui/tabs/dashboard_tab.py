@@ -110,9 +110,32 @@ class DashboardTab(QWidget):
             self.stack.setCurrentIndex(0)
             return
 
-        # Chart
+        # --- Chart ---
         self.ax.clear()
-        if "party_b" in df.columns:
+
+        # Check if call_type exists to draw a Pie Chart
+        if "call_type" in df.columns and not df["call_type"].isna().all():
+            counts = df["call_type"].value_counts()
+
+            # Modern color palette
+            colors = ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
+
+            # Draw Donut Chart
+            self.ax.pie(
+                counts.values,
+                labels=counts.index,
+                autopct='%1.1f%%',
+                startangle=90,
+                colors=colors,
+                wedgeprops=dict(width=0.4, edgecolor='w'),  # width=0.4 makes it a donut
+                textprops={'fontsize': 9}
+            )
+            self.ax.set_title("Event Type Breakdown", fontsize=11, fontweight='bold')
+            self.ax.axis('equal')  # Ensures the pie is drawn as a perfect circle
+            self.canvas.figure.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+
+        # Fallback to Bar Chart if no call_type column exists
+        elif "party_b" in df.columns:
             top = df["party_b"].dropna().astype(str).value_counts().head(8)
             if not top.empty:
                 self.ax.barh(top.index, top.values, color="#2563EB")
@@ -120,7 +143,9 @@ class DashboardTab(QWidget):
                 self.ax.tick_params(axis="both", labelsize=9)
                 self.ax.spines["top"].set_visible(False)
                 self.ax.spines["right"].set_visible(False)
+                self.ax.set_title("Top Interlocutors", fontsize=11, fontweight='bold')
                 self.canvas.figure.subplots_adjust(left=0.30, right=0.98, top=0.92, bottom=0.15)
+
         self.canvas.draw()
 
         # Risk

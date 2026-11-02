@@ -1,12 +1,4 @@
-"""Login and registration dialog with strong password policy.
-
-Password requirements:
-  - At least 10 characters
-  - At least one uppercase letter
-  - At least one lowercase letter
-  - At least one digit
-  - At least one special character
-"""
+"""Login dialog with enhanced security, validation, and rate-limiting."""
 from __future__ import annotations
 
 import logging
@@ -14,24 +6,13 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
+    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from core.constants import (
-    LOCKOUT_SECONDS,
-    MAX_LOGIN_ATTEMPTS,
-    ROLES,
-)
+from core.constants import LOCKOUT_SECONDS, MAX_LOGIN_ATTEMPTS, ROLES
 from core.crypto import hash_password, verify_password
 from core.database import Database
 from ui.theme.palette import LIGHT
@@ -39,22 +20,15 @@ from ui.theme.stylesheet import stylesheet
 
 log = logging.getLogger(__name__)
 
-SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?"
 
-
-def validate_password_strength(password: str) -> str | None:
-    """Return None if password is strong, or an error message."""
-    if len(password) < 10:
-        return "Password must be at least 10 characters."
-    if not any(c.isupper() for c in password):
-        return "Password must contain an uppercase letter."
-    if not any(c.islower() for c in password):
-        return "Password must contain a lowercase letter."
-    if not any(c.isdigit() for c in password):
-        return "Password must contain a digit."
-    if not any(c in SPECIAL_CHARS for c in password):
-        return "Password must contain a special character."
-    return None
+def validate_password_strength(password: str) -> int:
+    """Return a score 0-4 based on length and complexity."""
+    score = 0
+    if len(password) >= 10: score += 1
+    if any(c.isupper() for c in password) and any(c.islower() for c in password): score += 1
+    if any(c.isdigit() for c in password): score += 1
+    if any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password): score += 1
+    return score
 
 
 class LoginDialog(QDialog):
@@ -62,7 +36,7 @@ class LoginDialog(QDialog):
 
     def __init__(self, db_path: str | Path, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("CDR Forensic System")
+        self.setWindowTitle("Secure Access")
         self.setModal(True)
         self.resize(880, 520)
         self.setStyleSheet(stylesheet(LIGHT))
@@ -72,145 +46,171 @@ class LoginDialog(QDialog):
 
         self._db = Database(Path(db_path))
         self._db.open()
-
         self._build_ui()
-
-    # ---------- UI ----------
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_brand_panel())
-        root.addWidget(self._build_form_panel(), 1)
 
-    def _build_brand_panel(self) -> QFrame:
+        # Left Brand Panel
         brand = QFrame()
         brand.setFixedWidth(360)
-        brand.setStyleSheet(
-            "QFrame {"
-            "  background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
-            "  stop:0 #1E3A8A, stop:1 #2563EB);"
-            "}"
-        )
-        layout = QVBoxLayout(brand)
-        layout.setContentsMargins(36, 40, 36, 40)
-        layout.setSpacing(10)
-
-        logo = QLabel("◈")
-        logo.setStyleSheet("font-size: 42px; color: white;")
+        brand.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1E3A8A, stop:1 #2563EB);")
+        bl = QVBoxLayout(brand)
+        bl.setContentsMargins(36, 40, 36, 40)
 
         title = QLabel("CDR Forensic\nInvestigator")
-        title.setStyleSheet(
-            "font-size: 26px; font-weight: 700; color: white;"
-        )
+        title.setStyleSheet("font-size: 28px; font-weight: 700; color: white;")
+        bl.addWidget(QLabel("<span style='font-size:42px; color:white;'>◈</span>"))
+        bl.addSpacing(12)
+        bl.addWidget(title)
+        bl.addStretch()
+        bl.addWidget(
+            QLabel("<span style='color:rgba(255,255,255,0.6); font-size:11px;'>🔒 AES-256 Encrypted Session</span>"))
+        root.addWidget(brand)
 
-        subtitle = QLabel(
-            "AES-secured workspace for lawful\n"
-            "interception analysis and evidence dossiers."
-        )
-        subtitle.setStyleSheet(
-            "color: rgba(255,255,255,0.78); font-size: 13px;"
-        )
+        # Right Form Panel
+        form = QWidget()
+        fl = QVBoxLayout(form)
+        fl.setContentsMargins(48, 48, 48, 48)
+        fl.setSpacing(12)
 
-        restricted = QLabel("Restricted — authorized personnel only")
-        restricted.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 11px;"
-        )
-
-        layout.addWidget(logo)
-        layout.addSpacing(12)
-        layout.addWidget(title)
-        layout.addSpacing(8)
-        layout.addWidget(subtitle)
-        layout.addStretch()
-        layout.addWidget(restricted)
-        return brand
-
-    def _build_form_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.setSpacing(10)
-
-        heading = QLabel("Welcome back")
-        heading.setStyleSheet("font-size: 22px; font-weight: 700;")
-
-        sub = QLabel("Sign in to your investigative workspace")
-        sub.setStyleSheet("color: #6B7280; margin-bottom: 16px;")
+        fl.addWidget(QLabel("<b style='font-size:20px;'>Welcome back</b>"))
 
         self.txt_user = QLineEdit()
         self.txt_user.setPlaceholderText("Username")
+        fl.addWidget(self.txt_user)
 
+        # Password Field with Eye Icon
+        pass_row = QHBoxLayout()
         self.txt_pass = QLineEdit()
         self.txt_pass.setPlaceholderText("Password")
         self.txt_pass.setEchoMode(QLineEdit.Password)
+        self.txt_pass.textChanged.connect(self._update_strength)
+        pass_row.addWidget(self.txt_pass)
+
+        self.btn_eye = QPushButton("👁")
+        self.btn_eye.setFixedWidth(40)
+        self.btn_eye.setCheckable(True)
+        self.btn_eye.setStyleSheet("background: transparent; border: none; color: #6B7280; font-size: 16px;")
+        self.btn_eye.toggled.connect(self._toggle_password)
+        pass_row.addWidget(self.btn_eye)
+        fl.addLayout(pass_row)
+
+        # Strength Meter
+        self.strength_bar = QProgressBar()
+        self.strength_bar.setMaximum(4)
+        self.strength_bar.setTextVisible(False)
+        self.strength_bar.setFixedHeight(6)
+        self.strength_bar.setVisible(False)
+        fl.addWidget(self.strength_bar)
+
+        self.lbl_caps = QLabel("⚠️ Caps Lock is ON")
+        self.lbl_caps.setStyleSheet("color: #D97706; font-size: 11px;")
+        self.lbl_caps.setVisible(False)
+        fl.addWidget(self.lbl_caps)
 
         self.cmb_role = QComboBox()
         self.cmb_role.addItems(ROLES)
+        fl.addWidget(self.cmb_role)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet(
-            "color: #DC2626; font-size: 12px; min-height: 16px;"
-        )
+        self.lbl_status.setStyleSheet("color: #DC2626; font-size: 12px; min-height: 16px;")
         self.lbl_status.setWordWrap(True)
+        fl.addWidget(self.lbl_status)
 
-        btn_login = QPushButton("Sign in")
-        btn_login.setProperty("role", "primary")
-        btn_login.setMinimumHeight(42)
-        btn_login.clicked.connect(self._on_login)
+        self.btn_login = QPushButton("Sign in")
+        self.btn_login.setMinimumHeight(42)
+        self.btn_login.setStyleSheet("background: #2563EB; color: white; border-radius: 6px; font-weight: bold;")
+        self.btn_login.clicked.connect(self._on_login)
 
         btn_register = QPushButton("Create account")
         btn_register.setMinimumHeight(36)
         btn_register.clicked.connect(self._on_register)
 
-        layout.addWidget(heading)
-        layout.addWidget(sub)
-        layout.addWidget(self.txt_user)
-        layout.addWidget(self.txt_pass)
-        layout.addWidget(self.cmb_role)
-        layout.addWidget(self.lbl_status)
-        layout.addSpacing(4)
-        layout.addWidget(btn_login)
-        layout.addWidget(btn_register)
-
-        hint = QLabel(
-            "<small style='color:#9CA3AF;'>"
-            "Password must be 10+ chars with upper, lower, digit, and symbol."
-            "</small>"
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        layout.addStretch()
+        fl.addSpacing(10)
+        fl.addWidget(self.btn_login)
+        fl.addWidget(btn_register)
+        fl.addStretch()
+        root.addWidget(form, 1)
 
         if self._user_count() == 0:
-            self.lbl_status.setStyleSheet(
-                "color: #2563EB; font-size: 12px;"
-            )
-            self.lbl_status.setText(
-                "First run — register an account to get started."
-            )
+            self._set_success("First run — register an account to get started.")
 
-        return panel
+    def _toggle_password(self, checked: bool):
+        self.txt_pass.setEchoMode(QLineEdit.Normal if checked else QLineEdit.Password)
 
-    # ---------- handlers ----------
+    def _update_strength(self, text: str):
+        if not text:
+            self.strength_bar.setVisible(False)
+            return
+        self.strength_bar.setVisible(True)
+        score = validate_password_strength(text)
+        self.strength_bar.setValue(score)
+
+        colors = ["#DC2626", "#D97706", "#EAB308", "#16A34A", "#059669"]
+        self.strength_bar.setStyleSheet(
+            f"QProgressBar::chunk {{ background-color: {colors[score]}; border-radius: 3px; }}")
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_CapsLock:
+            self.lbl_caps.setVisible(not self.lbl_caps.isVisible())
+        super().keyPressEvent(event)
+
+    # ============================================================
+    # RATE LIMITING & VALIDATION
+    # ============================================================
+
+    def _apply_rate_limit(self, seconds: int, reason: str) -> None:
+        """Disable the login button temporarily to prevent brute-forcing."""
+        self.btn_login.setEnabled(False)
+        self.btn_login.setText(f"Locked ({seconds}s)")
+        self._set_error(f"{reason} Please wait {seconds} seconds.")
+
+        # Use QTimer to re-enable the button after the cooldown
+        QTimer.singleShot(seconds * 1000, self._reset_rate_limit)
+
+    def _reset_rate_limit(self) -> None:
+        self.btn_login.setEnabled(True)
+        self.btn_login.setText("Sign in")
+
+    def _validate_inputs(self, user: str, pwd: str) -> bool:
+        """System validation for inputs before hitting the database."""
+        if not user or not pwd:
+            QMessageBox.warning(self, "Validation Error", "Username and Password cannot be empty.")
+            return False
+
+        if len(user) < 3:
+            QMessageBox.warning(self, "Validation Error", "Username must be at least 3 characters long.")
+            return False
+
+        if not re.match(r"^[a-zA-Z0-9_]+$", user):
+            QMessageBox.warning(self, "Validation Error",
+                                "Username can only contain letters, numbers, and underscores (no spaces).")
+            return False
+
+        if len(pwd) > 128:
+            QMessageBox.warning(self, "Validation Error", "Password is too long (maximum 128 characters).")
+            return False
+
+        return True
+
+    # ============================================================
+    # HANDLERS
+    # ============================================================
 
     def _on_login(self) -> None:
         user = self.txt_user.text().strip()
         pwd = self.txt_pass.text()
 
-        if not user or not pwd:
-            self._set_error("Enter both username and password.")
+        if not self._validate_inputs(user, pwd):
             return
 
         try:
             with self._db.cursor() as cur:
                 cur.execute(
-                    "SELECT salt, password_hash, role, "
-                    "failed_attempts, locked_until "
-                    "FROM system_users WHERE username = ?",
-                    (user,),
+                    "SELECT salt, password_hash, role, failed_attempts, locked_until "
+                    "FROM system_users WHERE username = ?", (user,),
                 )
                 row = cur.fetchone()
         except Exception as e:
@@ -219,36 +219,34 @@ class LoginDialog(QDialog):
             return
 
         if row is None:
-            self._set_error("Invalid credentials.")
+            # Rate limit for non-existent users too (prevents user enumeration attacks)
+            self._apply_rate_limit(3, "Invalid credentials.")
             return
 
         salt_hex, hash_hex, role, failed, locked_until = row
 
+        # Check Database Lockout
         if locked_until:
             try:
                 locked_dt = datetime.fromisoformat(locked_until)
             except ValueError:
                 locked_dt = None
             if locked_dt and locked_dt > datetime.now(timezone.utc):
-                remaining = int(
-                    (locked_dt - datetime.now(timezone.utc)).total_seconds()
-                )
-                self._set_error(
-                    f"Account locked. Try again in {remaining}s."
-                )
+                remaining = int((locked_dt - datetime.now(timezone.utc)).total_seconds())
+                self._apply_rate_limit(remaining, "Account temporarily locked.")
                 return
 
+        # Verify Password
         if not verify_password(pwd, salt_hex, hash_hex):
             self._record_failure(user, failed)
+            # Rate limit: 3 seconds for the first fail, 5 for the second, etc.
+            cooldown = 3 if failed < 3 else 5
+            self._apply_rate_limit(cooldown, "Invalid credentials.")
             return
 
+        # Success
         with self._db.cursor() as cur:
-            cur.execute(
-                "UPDATE system_users "
-                "SET failed_attempts = 0, locked_until = NULL "
-                "WHERE username = ?",
-                (user,),
-            )
+            cur.execute("UPDATE system_users SET failed_attempts = 0, locked_until = NULL WHERE username = ?", (user,))
 
         self.username = user
         self.role = role
@@ -260,47 +258,38 @@ class LoginDialog(QDialog):
         pwd = self.txt_pass.text()
         role = self.cmb_role.currentText()
 
-        if not user or not pwd:
-            self._set_error("Enter both username and password.")
+        if not self._validate_inputs(user, pwd):
             return
 
-        if len(user) < 3:
-            self._set_error("Username must be at least 3 characters.")
-            return
-
-        # Strong password policy
-        error = validate_password_strength(pwd)
-        if error:
-            self._set_error(error)
+        if validate_password_strength(pwd) < 4:
+            QMessageBox.warning(
+                self,
+                "Weak Password",
+                "Password must be at least 10 characters and include uppercase, lowercase, a number, and a special symbol."
+            )
             return
 
         try:
             with self._db.cursor() as cur:
-                cur.execute(
-                    "SELECT 1 FROM system_users WHERE username = ?",
-                    (user,),
-                )
+                cur.execute("SELECT 1 FROM system_users WHERE username = ?", (user,))
                 if cur.fetchone():
-                    self._set_error("Username already exists.")
+                    QMessageBox.warning(self, "Registration Failed", "Username already exists.")
                     return
 
                 salt_hex, hash_hex = hash_password(pwd)
-                cur.execute(
-                    "INSERT INTO system_users "
-                    "(username, salt, password_hash, role) "
-                    "VALUES (?, ?, ?, ?)",
-                    (user, salt_hex, hash_hex, role),
-                )
+                cur.execute("INSERT INTO system_users (username, salt, password_hash, role) VALUES (?, ?, ?, ?)",
+                            (user, salt_hex, hash_hex, role))
         except Exception as e:
             log.exception("Registration failed.")
             self._set_error(f"Registration failed: {e}")
             return
 
-        self._set_success(
-            f"Account '{user}' registered as {role}. Sign in now."
-        )
+        self._set_success(f"Account '{user}' registered. Sign in now.")
+        QMessageBox.information(self, "Success", "Account created successfully! You can now sign in.")
 
-    # ---------- helpers ----------
+    # ============================================================
+    # HELPERS
+    # ============================================================
 
     def _user_count(self) -> int:
         try:
@@ -314,45 +303,24 @@ class LoginDialog(QDialog):
         attempts = previous_failures + 1
         locked_until = None
         if attempts >= MAX_LOGIN_ATTEMPTS:
-            lock_time = (
-                datetime.now(timezone.utc)
-                + timedelta(seconds=LOCKOUT_SECONDS)
-            )
+            lock_time = datetime.now(timezone.utc) + timedelta(seconds=LOCKOUT_SECONDS)
             locked_until = lock_time.isoformat()
-            attempts = 0
-            self._set_error(
-                f"Too many attempts. Locked for {LOCKOUT_SECONDS}s."
-            )
-        else:
-            remaining = MAX_LOGIN_ATTEMPTS - attempts
-            self._set_error(
-                f"Invalid credentials. {remaining} attempt(s) remaining."
-            )
+            attempts = 0  # Reset counter after long lockout
 
         try:
             with self._db.cursor() as cur:
-                cur.execute(
-                    "UPDATE system_users "
-                    "SET failed_attempts = ?, locked_until = ? "
-                    "WHERE username = ?",
-                    (attempts, locked_until, user),
-                )
+                cur.execute("UPDATE system_users SET failed_attempts = ?, locked_until = ? WHERE username = ?",
+                            (attempts, locked_until, user))
         except Exception:
             log.exception("Failed to record login failure.")
 
     def _set_error(self, message: str) -> None:
-        self.lbl_status.setStyleSheet(
-            "color: #DC2626; font-size: 12px; min-height: 16px;"
-        )
+        self.lbl_status.setStyleSheet("color: #DC2626; font-size: 12px; min-height: 16px;")
         self.lbl_status.setText(message)
 
     def _set_success(self, message: str) -> None:
-        self.lbl_status.setStyleSheet(
-            "color: #16A34A; font-size: 12px; min-height: 16px;"
-        )
+        self.lbl_status.setStyleSheet("color: #16A34A; font-size: 12px; min-height: 16px;")
         self.lbl_status.setText(message)
-
-    # ---------- lifecycle ----------
 
     def reject(self) -> None:
         try:

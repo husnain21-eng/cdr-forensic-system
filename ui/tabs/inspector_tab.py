@@ -1,10 +1,8 @@
 """Inspector tab — raw CDR data browser with live search.
-
 Full row-level view of the loaded dataset with a filter box that
 matches across every column.
 """
 from __future__ import annotations
-
 import pandas as pd
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -14,11 +12,9 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from ui.components.data_table import DataTable
 from ui.components.empty_state import EmptyState
 from ui.models.pandas_model import PandasModel
-
 
 class InspectorTab(QWidget):
     """Two-page stack: empty state + searchable raw data table."""

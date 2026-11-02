@@ -8,20 +8,9 @@ import pandas as pd
 from PyQt5.QtCore import QEvent, QTimer, Qt
 from PyQt5.QtGui import QKeySequence, QCursor
 from PyQt5.QtWidgets import (
-    QApplication,
-    QFileDialog,
-    QGroupBox,
-    QLabel,
-    QMainWindow,
-    QMenu,
-    QMessageBox,
-    QProgressBar,
-    QPushButton,
-    QScrollArea,
-    QShortcut,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
+    QApplication, QFileDialog, QGroupBox, QLabel, QMainWindow, QMenu,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QShortcut,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core import settings as user_settings
@@ -37,7 +26,6 @@ from data.analyzer.graph import build_call_graph, centrality_table, detect_commu
 from data.analyzer.markov import predict_next_call
 from data.analyzer.mutual import mutual_contacts
 from data.analyzer.risk import compute_risk
-
 from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
 
@@ -61,13 +49,8 @@ from ui.theme.stylesheet import stylesheet
 log = logging.getLogger(__name__)
 
 TAB_ITEMS = [
-    "◉  Dashboard",
-    "⬡  Network",
-    "◐  Geo Map",
-    "⚠  Anomalies",
-    "▤  Database",
-    "⎙  Reports",
-    "≣  Raw Logs",
+    "◉  Dashboard", "⬡  Network", "◐  Geo Map",
+    "⚠  Anomalies", "▤  Database", "⎙  Reports", "≣  Raw Logs",
 ]
 
 
@@ -84,20 +67,12 @@ class MainWindow(QMainWindow):
         self.db.open()
         self.audit = AuditTrail(self.db)
 
-        # Full dataset (unfiltered) and filtered view
         self.df_raw_a = pd.DataFrame()
         self.df_raw_b = pd.DataFrame()
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
 
-        # Active filter state
-        self._filter_state: dict = {
-            "phone": "",
-            "use_date": False,
-            "from": None,
-            "to": None,
-        }
-
+        self._filter_state: dict = {"phone": "", "use_date": False, "from": None, "to": None}
         self._theme_is_dark = False
         self._idle_seconds = 0
         self._font_size = user_settings.get("font_size", 14)
@@ -105,10 +80,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._auto_size_to_screen()
 
-        self.audit.log(
-            self.current_user, self.current_role,
-            "LOGIN", "Session started.",
-        )
+        self.audit.log(self.current_user, self.current_role, "LOGIN", "Session started.")
         self._install_idle_watch()
         self._install_shortcuts()
 
@@ -128,18 +100,15 @@ class MainWindow(QMainWindow):
         min_h = min(640, int(available.height() * 0.80))
         self.setMinimumSize(min_w, min_h)
         self.resize(target_w, target_h)
-        x = available.x() + (available.width() - target_w) // 2
-        y = available.y() + (available.height() - target_h) // 2
-        self.move(x, y)
+        self.move(available.x() + (available.width() - target_w) // 2,
+                  available.y() + (available.height() - target_h) // 2)
 
     # ============================================================
     # UI CONSTRUCTION
     # ============================================================
 
     def _build_ui(self) -> None:
-        self.setWindowTitle(
-            f"CDR Forensic System — {self.current_user} [{self.current_role}]"
-        )
+        self.setWindowTitle(f"CDR Forensic System — {self.current_user} [{self.current_role}]")
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -147,10 +116,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self.toolbar = TopToolbar(
-            username=self.current_user,
-            role=self.current_role,
-        )
+        self.toolbar = TopToolbar(username=self.current_user, role=self.current_role)
         root.addWidget(self.toolbar)
 
         self.tabs = QTabWidget()
@@ -162,17 +128,13 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._wire_toolbar()
         self._apply_theme()
-
-        # This activates the right-click printing feature
         self._install_section_printing()
 
     def _install_print_corner_button(self) -> None:
         self.print_btn = QPushButton("🖨  Print Tab")
         self.print_btn.setToolTip("Print the current tab (Ctrl+P)")
         self.print_btn.setMinimumHeight(28)
-        self.print_btn.setStyleSheet(
-            "QPushButton { padding: 4px 12px; font-size: 12px; }"
-        )
+        self.print_btn.setStyleSheet("QPushButton { padding: 4px 12px; font-size: 12px; }")
         self.print_btn.clicked.connect(self._on_print_current_tab)
         self.tabs.setCornerWidget(self.print_btn, Qt.TopRightCorner)
 
@@ -187,8 +149,7 @@ class MainWindow(QMainWindow):
 
         for label, tab in zip(TAB_ITEMS, [
             self.tab_dashboard, self.tab_network, self.tab_map,
-            self.tab_anomalies, self.tab_database, self.tab_report,
-            self.tab_inspector,
+            self.tab_anomalies, self.tab_database, self.tab_report, self.tab_inspector,
         ]):
             self.tabs.addTab(self._scrollable(tab), label)
 
@@ -207,41 +168,31 @@ class MainWindow(QMainWindow):
     def _build_status_bar(self) -> None:
         sb = self.statusBar()
         self.status_label = QLabel("Ready.")
-
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximumWidth(220)
         self.progress_bar.setMaximumHeight(16)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setVisible(False)
-
-        self.user_label = QLabel(
-            f"◉  {self.current_user} · {self.current_role}"
-        )
+        self.user_label = QLabel(f"◉  {self.current_user} · {self.current_role}")
         self.lock_label = QLabel("")
         self.lock_label.setStyleSheet("color: #6B7280;")
-
         sb.addWidget(self.status_label, 1)
         sb.addPermanentWidget(self.progress_bar)
         sb.addPermanentWidget(self.user_label)
         sb.addPermanentWidget(self.lock_label)
 
     # ============================================================
-    # PRINTING (Full Tab + Specific Sections)
+    # PRINTING
     # ============================================================
 
     def _on_print_current_tab(self) -> None:
         current = self.tabs.currentWidget()
-        if current is None:
-            return
+        if current is None: return
         tab_name = self.tabs.tabText(self.tabs.currentIndex()).strip()
         try:
             printed = print_widget(current, parent=self, landscape=True)
-            if not printed:
-                return
-            self.audit.log(
-                self.current_user, self.current_role,
-                "PRINT_TAB", f"Printed tab: {tab_name}",
-            )
+            if not printed: return
+            self.audit.log(self.current_user, self.current_role, "PRINT_TAB", f"Printed tab: {tab_name}")
             toast(self, f"Sent '{tab_name}' to printer", tone="success")
             self.status_label.setText(f"Printed: {tab_name}")
         except Exception as e:
@@ -249,32 +200,23 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Print error", str(e))
 
     def _install_section_printing(self) -> None:
-        """Attach a right-click print menu to all GroupBoxes and Tables."""
         for group_box in self.findChildren(QGroupBox):
             group_box.setContextMenuPolicy(Qt.CustomContextMenu)
-            group_box.customContextMenuRequested.connect(
-                lambda pos, w=group_box: self._show_print_menu(pos, w)
-            )
+            group_box.customContextMenuRequested.connect(lambda pos, w=group_box: self._show_print_menu(pos, w))
             group_box.setToolTip("Right-click to print this section")
-
         for table in self.findChildren(DataTable):
             table.setContextMenuPolicy(Qt.CustomContextMenu)
-            table.customContextMenuRequested.connect(
-                lambda pos, w=table: self._show_print_menu(pos, w)
-            )
+            table.customContextMenuRequested.connect(lambda pos, w=table: self._show_print_menu(pos, w))
             table.setToolTip("Right-click to print this table")
 
     def _show_print_menu(self, pos, widget: QWidget) -> None:
-        """Show the right-click context menu."""
         menu = QMenu(self)
         print_action = menu.addAction("🖨 Print this Section")
         action = menu.exec_(widget.mapToGlobal(pos))
-
         if action == print_action:
             self._on_print_section(widget)
 
     def _print_under_cursor(self) -> None:
-        """Print whatever section the mouse is currently hovering over."""
         widget = QApplication.widgetAt(QCursor.pos())
         while widget is not None:
             if isinstance(widget, (QGroupBox, DataTable)):
@@ -283,7 +225,6 @@ class MainWindow(QMainWindow):
             widget = widget.parentWidget()
 
     def _on_print_section(self, widget: QWidget) -> None:
-        """Print a specific widget (sub-section)."""
         try:
             printed = print_widget(widget, parent=self, landscape=True)
             if printed:
@@ -294,60 +235,54 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Print error", str(e))
 
     # ============================================================
+    # VALIDATION
+    # ============================================================
+
+    def _validate_cdr_dataframe(self, df: pd.DataFrame, filename: str) -> tuple[bool, str]:
+        if df.empty:
+            return False, f"File '{filename}' is empty or contains no valid data rows."
+        required_cols = ["party_a", "party_b", "timestamp"]
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            return False, (
+                f"File '{filename}' is missing critical CDR columns: {', '.join(missing)}.\n\n"
+                "The file must contain headers for Caller (A-Party), Called (B-Party), and DateTime."
+            )
+        return True, "OK"
+
+    # ============================================================
     # FILTERS
     # ============================================================
 
     def _on_open_filters(self) -> None:
-        dlg = FiltersDialog(
-            self,
-            default_from=self._filter_state.get("from"),
-            default_to=self._filter_state.get("to"),
-            default_phone=self._filter_state.get("phone", ""),
-        )
-        if dlg.exec_() != FiltersDialog.Accepted:
-            return
-
+        dlg = FiltersDialog(self, default_from=self._filter_state.get("from"), default_to=self._filter_state.get("to"),
+                            default_phone=self._filter_state.get("phone", ""))
+        if dlg.exec_() != FiltersDialog.Accepted: return
         values = dlg.get_values()
         self._filter_state = values
         self._apply_filter()
-
-        self.audit.log(
-            self.current_user, self.current_role,
-            "APPLY_FILTER",
-            f"phone='{values['phone']}', date_range={values['use_date']}",
-        )
+        self.audit.log(self.current_user, self.current_role, "APPLY_FILTER",
+                       f"phone='{values['phone']}', date_range={values['use_date']}")
 
     def _apply_filter(self) -> None:
         if self.df_raw_a.empty:
             toast(self, "No data to filter", tone="warning")
             return
-
         df = self.df_raw_a.copy()
         state = self._filter_state
-
         phone = state.get("phone", "")
         if phone:
             df = df[
-                df["party_a"].astype(str).str.contains(phone, na=False)
-                | df["party_b"].astype(str).str.contains(phone, na=False)
-                ]
-
+                df["party_a"].astype(str).str.contains(phone, na=False) | df["party_b"].astype(str).str.contains(phone,
+                                                                                                                 na=False)]
         if state.get("use_date") and "timestamp" in df.columns:
-            dt_from = state.get("from")
-            dt_to = state.get("to")
+            dt_from, dt_to = state.get("from"), state.get("to")
             if dt_from is not None and dt_to is not None:
-                df = df[
-                    (df["timestamp"] >= pd.Timestamp(dt_from))
-                    & (df["timestamp"] <= pd.Timestamp(dt_to))
-                    ]
-
+                df = df[(df["timestamp"] >= pd.Timestamp(dt_from)) & (df["timestamp"] <= pd.Timestamp(dt_to))]
         self.df_a = df.reset_index(drop=True)
         self._refresh_all()
-
         if len(self.df_a) < len(self.df_raw_a):
-            self.status_label.setText(
-                f"Filtered: {len(self.df_a):,} of {len(self.df_raw_a):,} records"
-            )
+            self.status_label.setText(f"Filtered: {len(self.df_a):,} of {len(self.df_raw_a):,} records")
             toast(self, f"Filtered to {len(self.df_a):,} records", tone="info")
         else:
             self.status_label.setText(f"{len(self.df_a):,} records (no filter applied)")
@@ -358,6 +293,21 @@ class MainWindow(QMainWindow):
         self._refresh_all()
         toast(self, "Filters cleared", tone="info")
 
+    def _on_call_type_filter_changed(self, text: str) -> None:
+        if self.df_raw_a.empty: return
+        if text == "All Events":
+            self.df_a = self.df_raw_a.copy()
+        else:
+            if "call_type" in self.df_raw_a.columns:
+                self.df_a = self.df_raw_a[
+                    self.df_raw_a["call_type"].astype(str).str.upper().str.contains(text.upper())].reset_index(
+                    drop=True)
+            else:
+                toast(self, "No call_type column found in this CDR", tone="warning")
+                self.df_a = self.df_raw_a.copy()
+        self._refresh_all()
+        self.status_label.setText(f"Filtered by: {text} ({len(self.df_a):,} records)")
+
     # ============================================================
     # RESET SESSION
     # ============================================================
@@ -366,22 +316,15 @@ class MainWindow(QMainWindow):
         if self.df_raw_a.empty and self.df_raw_b.empty:
             toast(self, "Nothing to reset", tone="warning")
             return
-
-        ok = confirm(
-            self, "Reset Session?",
-            "All loaded CDR data will be cleared from memory. "
-            "The audit trail and user accounts are preserved. This cannot be undone.",
-            danger=True, ok_text="Reset Session",
-        )
-        if not ok:
-            return
-
+        ok = confirm(self, "Reset Session?",
+                     "All loaded CDR data will be cleared from memory. The audit trail and user accounts are preserved. This cannot be undone.",
+                     danger=True, ok_text="Reset Session")
+        if not ok: return
         self.df_raw_a = pd.DataFrame()
         self.df_raw_b = pd.DataFrame()
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
         self._filter_state = {"phone": "", "use_date": False, "from": None, "to": None}
-
         self.tab_dashboard.clear()
         self.tab_network.clear()
         self.tab_map.clear()
@@ -389,7 +332,6 @@ class MainWindow(QMainWindow):
         self.tab_report.clear()
         self.tab_inspector.clear()
         self.tab_database.refresh()
-
         self.status_label.setText("Session reset — no data loaded.")
         self.toolbar.search.clear()
         self.audit.log(self.current_user, self.current_role, "RESET_SESSION", "Cleared all loaded CDR data.")
@@ -408,8 +350,7 @@ class MainWindow(QMainWindow):
 
     def _update_progress(self, value: int, label: str | None = None) -> None:
         self.progress_bar.setValue(value)
-        if label:
-            self.status_label.setText(label)
+        if label: self.status_label.setText(label)
         QApplication.processEvents()
 
     def _hide_progress(self) -> None:
@@ -430,43 +371,44 @@ class MainWindow(QMainWindow):
         self.toolbar.font_decrease.connect(self._on_font_decrease)
         self.toolbar.open_filters.connect(self._on_open_filters)
         self.toolbar.reset_session.connect(self._on_reset_session)
+        self.toolbar.call_type_changed.connect(self._on_call_type_filter_changed)
 
     # ============================================================
     # FILE LOADING
     # ============================================================
 
     def _on_load_single(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open CDR file", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
-        )
-        if not path:
-            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open CDR file", "",
+                                              "CDR Files (*.csv *.xlsx *.xls);;All Files (*)")
+        if not path: return
         self._load_into_slot(path, target="A")
 
     def _on_load_bulk(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Open multiple CDR files", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
-        )
-        if not paths:
-            return
+        paths, _ = QFileDialog.getOpenFileNames(self, "Open multiple CDR files", "",
+                                                "CDR Files (*.csv *.xlsx *.xls);;All Files (*)")
+        if not paths: return
         self._load_bulk(paths)
 
     def _on_load_target_b(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Target B CDR", "", "CDR Files (*.csv *.xlsx *.xls);;All Files (*)"
-        )
-        if not path:
-            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open Target B CDR", "",
+                                              "CDR Files (*.csv *.xlsx *.xls);;All Files (*)")
+        if not path: return
         self._load_into_slot(path, target="B")
 
     def _load_into_slot(self, path, target) -> None:
-        self._show_progress(f"Loading {Path(path).name}…", maximum=0)
+        self._show_progress(f"Validating {Path(path).name}…", maximum=0)
         try:
             df = load_single_file(path)
         except Exception as e:
             self._hide_progress()
             log.exception("Load failed.")
-            QMessageBox.critical(self, "Load failed", str(e))
+            QMessageBox.critical(self, "Parse Error", f"Could not read the file:\n{str(e)}")
+            return
+
+        is_valid, error_msg = self._validate_cdr_dataframe(df, Path(path).name)
+        if not is_valid:
+            self._hide_progress()
+            QMessageBox.warning(self, "Invalid CDR File", error_msg)
             return
         self._hide_progress()
 
@@ -478,31 +420,37 @@ class MainWindow(QMainWindow):
             self.df_b = df.copy()
 
         if target == "A" and "timestamp" in df.columns and df["timestamp"].notna().any():
-            self._filter_state["from"] = df["timestamp"].min().to_pydatetime()
-            self._filter_state["to"] = df["timestamp"].max().to_pydatetime()
+            # Floor to seconds to prevent nanosecond warnings
+            self._filter_state["from"] = df["timestamp"].min().floor("s").to_pydatetime()
+            self._filter_state["to"] = df["timestamp"].max().floor("s").to_pydatetime()
 
         label = f"Target {target}: {len(df):,} records"
         self.audit.log(self.current_user, self.current_role, f"LOAD_{target}", f"{label} from {path}")
-        toast(self, label + " loaded", tone="success")
+        toast(self, label + " loaded successfully", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
 
     def _load_bulk(self, paths) -> None:
         total = len(paths)
         self._show_progress(f"Loading 0 of {total} files…", maximum=total)
-
         frames = []
         errors = []
         for i, p in enumerate(paths, start=1):
-            self._update_progress(i, f"Loading {i} of {total}: {Path(p).name}")
+            self._update_progress(i, f"Processing {i} of {total}: {Path(p).name}")
             try:
-                frames.append(load_single_file(p))
+                df = load_single_file(p)
+                is_valid, error_msg = self._validate_cdr_dataframe(df, Path(p).name)
+                if is_valid:
+                    frames.append(df)
+                else:
+                    errors.append(error_msg)
             except Exception as e:
-                errors.append(f"{p}: {e}")
+                errors.append(f"{Path(p).name}: Parse Error ({str(e)})")
 
         if not frames:
             self._hide_progress()
-            QMessageBox.critical(self, "Bulk load failed", "None of the files could be loaded.\n\n" + "\n".join(errors))
+            QMessageBox.critical(self, "Bulk Load Failed",
+                                 "None of the files passed validation:\n\n" + "\n- ".join(errors))
             return
 
         self._update_progress(total, "Combining files…")
@@ -515,14 +463,21 @@ class MainWindow(QMainWindow):
         self.df_a = combined.copy()
 
         if "timestamp" in combined.columns and combined["timestamp"].notna().any():
-            self._filter_state["from"] = combined["timestamp"].min().to_pydatetime()
-            self._filter_state["to"] = combined["timestamp"].max().to_pydatetime()
+            # Floor to seconds to prevent nanosecond warnings
+            self._filter_state["from"] = combined["timestamp"].min().floor("s").to_pydatetime()
+            self._filter_state["to"] = combined["timestamp"].max().floor("s").to_pydatetime()
 
-        label = f"Bulk: {total} files, {len(combined):,} records"
+        label = f"Bulk: {len(frames)} files, {len(combined):,} records"
         self.audit.log(self.current_user, self.current_role, "LOAD_BULK", label)
-        toast(self, label + " loaded", tone="success")
         self.status_label.setText(label)
         self._refresh_all()
+
+        if errors:
+            QMessageBox.warning(self, "Partial Load Success",
+                                f"Successfully loaded {len(frames)} files.\n\nSkipped {len(errors)} invalid file(s):\n- " + "\n- ".join(
+                                    errors))
+        else:
+            toast(self, label + " loaded successfully", tone="success")
 
     # ============================================================
     # MAP
@@ -532,20 +487,12 @@ class MainWindow(QMainWindow):
         if self.df_a.empty:
             QMessageBox.warning(self, "No data", "Load a CDR file first.")
             return
-
         self._show_progress("Generating map…", maximum=0)
         try:
-            colocations = None
-            if not self.df_b.empty:
-                colocations = colocation_events(self.df_a, self.df_b)
-
-            out = build_folium_map(
-                self.df_a,
-                self.df_b if not self.df_b.empty else None,
-                colocations,
-                show_heatmap=self.tab_map.heatmap_enabled(),
-                show_triangulation=self.tab_map.triangulation_enabled(),
-            )
+            colocations = colocation_events(self.df_a, self.df_b) if not self.df_b.empty else None
+            out = build_folium_map(self.df_a, self.df_b if not self.df_b.empty else None, colocations,
+                                   show_heatmap=self.tab_map.heatmap_enabled(),
+                                   show_triangulation=self.tab_map.triangulation_enabled())
             self._hide_progress()
             self.audit.log(self.current_user, self.current_role, "OPEN_MAP", f"Map opened: {out}")
             toast(self, "Map opened in browser", tone="success")
@@ -566,40 +513,20 @@ class MainWindow(QMainWindow):
         if self.df_a.empty:
             QMessageBox.warning(self, "No data", "Load a CDR file first.")
             return
-
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save PDF dossier", "dossier.pdf", "PDF Files (*.pdf)"
-        )
-        if not path:
-            return
-
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF dossier", "dossier.pdf", "PDF Files (*.pdf)")
+        if not path: return
         self._show_progress("Generating PDF…", maximum=0)
         try:
             from reports.pdf_builder import build_dossier
-
             df = self.df_a
             risk = compute_risk(df)
-            top = (
-                df["party_b"].dropna().astype(str).value_counts().head(20)
-                if "party_b" in df.columns else pd.Series(dtype=int)
-            )
-            towers = (
-                df["cell_id"].dropna().astype(str).value_counts().head(20)
-                if "cell_id" in df.columns else pd.Series(dtype=int)
-            )
-
-            build_dossier(
-                path=Path(path),
-                investigator=self.current_user,
-                role=self.current_role,
-                case_id="N/A",
-                risk_score=risk.score,
-                risk_level=risk.level,
-                risk_rationale=risk.rationale,
-                total_records=len(df),
-                top_contacts=list(top.items()),
-                towers=list(towers.items()),
-            )
+            top = df["party_b"].dropna().astype(str).value_counts().head(20) if "party_b" in df.columns else pd.Series(
+                dtype=int)
+            towers = df["cell_id"].dropna().astype(str).value_counts().head(
+                20) if "cell_id" in df.columns else pd.Series(dtype=int)
+            build_dossier(path=Path(path), investigator=self.current_user, role=self.current_role, case_id="N/A",
+                          risk_score=risk.score, risk_level=risk.level, risk_rationale=risk.rationale,
+                          total_records=len(df), top_contacts=list(top.items()), towers=list(towers.items()))
             self._hide_progress()
             self.audit.log(self.current_user, self.current_role, "EXPORT_PDF", str(path))
             toast(self, "PDF saved", tone="success")
@@ -625,26 +552,19 @@ class MainWindow(QMainWindow):
         if self.df_a.empty:
             self.status_label.setText("No dataset loaded.")
             return
-
         df = self.df_a
         try:
-            # 1. Graph Theory
             g = build_call_graph(df)
             centrality = centrality_table(g)
             communities = detect_communities(g)
-
-            # 2. Prediction & Connections
             markov_preds = predict_next_call(df)
             mutual = mutual_contacts(df, self.df_b) if not self.df_b.empty else None
-
-            # 3. Risk & Anomalies
             risk = compute_risk(df)
             anom_summary = summary(df)
             short = short_calls(df)
             night = night_calls(df)
             stat_anoms = statistical_anomalies(df)
 
-            # Update Tabs
             self.tab_dashboard.update_data(df, risk, anom_summary, markov_preds)
             self.tab_network.update_data(g, centrality, mutual, communities)
             self.tab_map.update_data(df)
@@ -653,9 +573,7 @@ class MainWindow(QMainWindow):
             self.tab_inspector.update_data(df)
             self.tab_database.refresh()
 
-            self.status_label.setText(
-                f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})"
-            )
+            self.status_label.setText(f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})")
         except Exception as e:
             log.exception("Refresh pipeline failed.")
             QMessageBox.critical(self, "Analysis error", str(e))
@@ -681,8 +599,7 @@ class MainWindow(QMainWindow):
     def _change_font(self, delta: int) -> None:
         new_size = self._font_size + delta
         new_size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, new_size))
-        if new_size == self._font_size:
-            return
+        if new_size == self._font_size: return
         self._font_size = new_size
         user_settings.set_value("font_size", new_size)
         self._apply_theme()
@@ -722,14 +639,12 @@ class MainWindow(QMainWindow):
             self.db.close()
         except Exception:
             log.exception("DB close on auto-lock failed.")
-
         self.hide()
         from ui.dialogs.login_dialog import LoginDialog
         login = LoginDialog(self.db_path, parent=self)
         if login.exec_() != LoginDialog.Accepted or not login.username:
             QApplication.quit()
             return
-
         self.db.open()
         self.audit = AuditTrail(self.db)
         self.tab_database._audit = self.audit
@@ -763,8 +678,7 @@ class MainWindow(QMainWindow):
     # ============================================================
 
     def closeEvent(self, event) -> None:
-        if hasattr(self, "_idle_timer"):
-            self._idle_timer.stop()
+        if hasattr(self, "_idle_timer"): self._idle_timer.stop()
         try:
             self.audit.log(self.current_user, self.current_role, "LOGOUT", "Session ended.")
         except Exception:
