@@ -1,20 +1,9 @@
-"""HMAC-signed, hash-chained audit trail.
-
-Every entry signs (previous_hash | investigator | role | action |
-details | timestamp). This creates a blockchain-like chain: deleting
-or modifying any entry breaks verification for all subsequent entries.
-"""
 import logging
 import sqlite3
 from datetime import datetime, timezone
-
 from core.crypto import audit_hmac
-
 log = logging.getLogger(__name__)
-
 GENESIS_HASH = "GENESIS"
-
-
 class AuditTrail:
     """Append-only, HMAC-signed, hash-chained audit log."""
 
