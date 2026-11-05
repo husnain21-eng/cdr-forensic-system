@@ -37,7 +37,6 @@ class Database:
         self._plain_path: Path | None = None
         self._conn: sqlite3.Connection | None = None
     # ---------- lifecycle ----------
-
     def open(self) -> None:
         if self._conn is not None:
             return
