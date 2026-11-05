@@ -2,18 +2,14 @@
 import hashlib
 import hmac
 import os
-
 import keyring
 from cryptography.fernet import Fernet
-
 from core.constants import (
     KEYRING_SERVICE,
     KEYRING_USER,
     PBKDF2_ITERATIONS,
     PBKDF2_SALT_BYTES,
 )
-
-
 def get_or_create_master_key() -> bytes:
     """Fetch or generate the master key stored in the OS keyring."""
     existing = keyring.get_password(KEYRING_SERVICE, KEYRING_USER)
@@ -22,12 +18,8 @@ def get_or_create_master_key() -> bytes:
     new_key = Fernet.generate_key()
     keyring.set_password(KEYRING_SERVICE, KEYRING_USER, new_key.decode("utf-8"))
     return new_key
-
-
 def _fernet() -> Fernet:
     return Fernet(get_or_create_master_key())
-
-
 def hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     """Return (salt_hex, hash_hex) using PBKDF2-HMAC-SHA256."""
     if salt is None:
@@ -39,8 +31,6 @@ def hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
         PBKDF2_ITERATIONS,
     )
     return salt.hex(), digest.hex()
-
-
 def verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
     """Constant-time comparison of password against stored hash."""
     try:
@@ -55,8 +45,6 @@ def verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
         PBKDF2_ITERATIONS,
     )
     return hmac.compare_digest(actual, expected)
-
-
 def audit_hmac(message: str) -> str:
     """Return HMAC-SHA256 signature of a message using the master key."""
     return hmac.new(
@@ -64,11 +52,8 @@ def audit_hmac(message: str) -> str:
         message.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-
-
 def secure_shred(path: str, passes: int = 3) -> None:
     """Overwrite a file with random bytes before deleting it.
-
     A simple 3-pass overwrite — good enough to defeat casual recovery
     tools. For defense against sophisticated forensics, use full-disk
     encryption at the OS level.
