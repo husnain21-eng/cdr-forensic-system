@@ -1,21 +1,12 @@
-"""Advanced filter dialog with date/time range and phone number filter.
-
-Returns the filter values via `get_values()` after the user clicks Apply.
-"""
+"""Advanced filter dialog with forced Apply logic."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
 from PyQt5.QtCore import QDateTime
 from PyQt5.QtWidgets import (
-    QDateTimeEdit,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QLabel,
-    QLineEdit,
-    QVBoxLayout,
-    QWidget,
+    QCheckBox, QDateTimeEdit, QDialog, QFormLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ui.theme.palette import LIGHT
@@ -25,14 +16,7 @@ from ui.theme.stylesheet import stylesheet
 class FiltersDialog(QDialog):
     """Modal dialog for date/time and phone-number filtering."""
 
-    def __init__(
-        self,
-        parent: QWidget | None = None,
-        *,
-        default_from: datetime | None = None,
-        default_to: datetime | None = None,
-        default_phone: str = "",
-    ):
+    def __init__(self, parent: QWidget | None = None, *, default_from=None, default_to=None, default_phone: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Advanced Filter")
         self.setModal(True)
@@ -47,26 +31,15 @@ class FiltersDialog(QDialog):
         heading.setStyleSheet("font-size: 15px;")
         layout.addWidget(heading)
 
-        hint = QLabel(
-            "Leave a field empty to skip that filter. "
-            "Both date fields must be filled to filter by date range."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #6B7280; font-size: 11px;")
-        layout.addWidget(hint)
-
-        # Form
         form = QFormLayout()
         form.setSpacing(10)
 
-        # Phone
         self.txt_phone = QLineEdit()
-        self.txt_phone.setPlaceholderText("e.g. 923200569544 (contains match)")
+        self.txt_phone.setPlaceholderText("e.g. 923200569544")
         self.txt_phone.setText(default_phone)
 
-        # Date/Time range
-        default_from = default_from or (datetime.now() - timedelta(days=30))
-        default_to = default_to or datetime.now()
+        default_from = default_from if default_from else (datetime.now() - timedelta(days=30))
+        default_to = default_to if default_to else datetime.now()
 
         self.dt_from = QDateTimeEdit()
         self.dt_from.setCalendarPopup(True)
@@ -78,8 +51,6 @@ class FiltersDialog(QDialog):
         self.dt_to.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self.dt_to.setDateTime(QDateTime(default_to))
 
-        # Toggle: enable/disable date range
-        from PyQt5.QtWidgets import QCheckBox
         self.chk_date = QCheckBox("Filter by date range")
         self.chk_date.setChecked(False)
         self.chk_date.toggled.connect(self._toggle_date)
@@ -93,43 +64,39 @@ class FiltersDialog(QDialog):
         layout.addLayout(form)
         layout.addStretch()
 
-        # Buttons
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.Apply
-            | QDialogButtonBox.Reset
-            | QDialogButtonBox.Cancel
-        )
-        buttons.button(QDialogButtonBox.Apply).setText("Apply Filter")
-        buttons.button(QDialogButtonBox.Reset).setText("Clear Filters")
-        buttons.button(QDialogButtonBox.Cancel).setText("Cancel")
+        # --- CUSTOM BUTTONS ---
+        btn_layout = QHBoxLayout()
 
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.Reset).clicked.connect(self._clear)
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
 
-        layout.addWidget(buttons)
+        btn_clear = QPushButton("Clear Filters")
+        btn_clear.clicked.connect(self._clear_and_accept)
 
-    # ---------- helpers ----------
+        btn_apply = QPushButton("Apply Filter")
+        btn_apply.setStyleSheet("background-color: #2563EB; color: white; font-weight: bold; padding: 8px 16px;")
+        btn_apply.clicked.connect(self.accept)  # Forces the dialog to return code 1
+
+        btn_layout.addWidget(btn_clear)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_apply)
+
+        layout.addLayout(btn_layout)
 
     def _toggle_date(self, enabled: bool) -> None:
         self.dt_from.setEnabled(enabled)
         self.dt_to.setEnabled(enabled)
 
-    def _clear(self) -> None:
+    def _clear_and_accept(self) -> None:
         self.txt_phone.clear()
         self.chk_date.setChecked(False)
-        self.dt_from.setDateTime(
-            QDateTime(datetime.now() - timedelta(days=30))
-        )
-        self.dt_to.setDateTime(QDateTime(datetime.now()))
-
-    # ---------- public API ----------
+        self.accept()
 
     def get_values(self) -> dict:
-        """Return the filter values as a dict."""
         return {
             "phone": self.txt_phone.text().strip(),
             "use_date": self.chk_date.isChecked(),
-            "from": self.dt_from.dateTime().toPyDateTime(),
-            "to": self.dt_to.dateTime().toPyDateTime(),
+            "from": self.dt_from.dateTime().toString("yyyy-MM-dd HH:mm:ss"),
+            "to": self.dt_to.dateTime().toString("yyyy-MM-dd HH:mm:ss"),
         }

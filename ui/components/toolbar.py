@@ -1,10 +1,16 @@
-"""Modern Top Toolbar with strict spacing."""
+"""Modern Top Toolbar."""
 from __future__ import annotations
 
 from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QToolButton, QGraphicsDropShadowEffect
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QToolButton,
+    QGraphicsDropShadowEffect,
 )
 from PyQt5.QtGui import QColor
 
@@ -48,6 +54,8 @@ class TopToolbar(QFrame):
                 padding: 6px 12px;
                 font-size: 13px;
             }
+            QComboBox:hover { border: 1px solid #3B82F6; }
+            QComboBox::drop-down { border: none; }
             QToolButton {
                 color: #CBD5E1;
                 background: transparent;
@@ -75,14 +83,13 @@ class TopToolbar(QFrame):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)  # Reduced spacing to fit more
+        layout.setSpacing(8)
 
-        # --- ZONE 1: SEARCH & FILTER ---
         self.search = QLineEdit()
         self.search.setPlaceholderText("🔍 Search...")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumWidth(180)
-        self.search.setMaximumWidth(250)  # Prevents it from growing too large
+        self.search.setMaximumWidth(250)
         self.search.textChanged.connect(self.search_changed.emit)
 
         self.cmb_call_type = QComboBox()
@@ -92,11 +99,8 @@ class TopToolbar(QFrame):
 
         layout.addWidget(self.search)
         layout.addWidget(self.cmb_call_type)
-
-        # Invisible Spacer to push actions to the right
         layout.addStretch(1)
 
-        # --- ZONE 2: ACTIONS ---
         btn_single = QPushButton("📁 Open CDR")
         btn_single.clicked.connect(self.load_single.emit)
         layout.addWidget(btn_single)
@@ -111,10 +115,11 @@ class TopToolbar(QFrame):
         btn_target_b.clicked.connect(self.load_target_b.emit)
         layout.addWidget(btn_target_b)
 
-        btn_filters = QToolButton()
-        btn_filters.setText("⚙️ Filters")
-        btn_filters.clicked.connect(self.open_filters.emit)
-        layout.addWidget(btn_filters)
+        # --- FIXED: Assigned to self so main_window can hide it ---
+        self.btn_filters = QToolButton()
+        self.btn_filters.setText("⚙️ Filters")
+        self.btn_filters.clicked.connect(self.open_filters.emit)
+        layout.addWidget(self.btn_filters)
 
         btn_reset = QToolButton()
         btn_reset.setText("🔄")
@@ -122,8 +127,6 @@ class TopToolbar(QFrame):
         btn_reset.clicked.connect(self.reset_session.emit)
         layout.addWidget(btn_reset)
 
-        # --- ZONE 3: SETTINGS ---
-        # Add a visual separator line
         line = QFrame()
         line.setFrameShape(QFrame.VLine)
         line.setStyleSheet("color: #334155;")
@@ -144,8 +147,7 @@ class TopToolbar(QFrame):
         btn_theme.clicked.connect(self.toggle_theme.emit)
         layout.addWidget(btn_theme)
 
-        # --- ZONE 4: USER BADGE ---
-        user_label = QLabel(f"👤 <b>{username.split()[0]}</b>")  # Only show first name to save space
+        user_label = QLabel(f"👤 <b>{username.split()[0]}</b>")
         user_label.setToolTip(f"Logged in as: {username} ({role})")
         user_label.setStyleSheet("color: #F8FAFC; padding-left: 8px;")
         layout.addWidget(user_label)

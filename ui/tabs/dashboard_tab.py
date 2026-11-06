@@ -60,7 +60,7 @@ class DashboardTab(QWidget):
         bottom.setSpacing(12)
 
         # 1. Risk card
-        risk_box = QGroupBox("Risk Assessment")
+        risk_box = QGroupBox("AI Risk Assessment (Random Forest)")
         risk_layout = QVBoxLayout(risk_box)
         self.lbl_score = QLabel("—")
         self.lbl_score.setStyleSheet("font-size: 26px; font-weight: 700; color: #374151;")

@@ -10,7 +10,7 @@ from PyQt5.QtGui import QKeySequence, QCursor
 from PyQt5.QtWidgets import (
     QApplication, QFileDialog, QGroupBox, QLabel, QMainWindow, QMenu,
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QShortcut,
-    QTabWidget, QVBoxLayout, QWidget,
+    QTabWidget, QVBoxLayout, QWidget, QDialog,
 )
 
 from core import settings as user_settings
@@ -25,7 +25,8 @@ from data.analyzer.colocation import colocation_events
 from data.analyzer.graph import build_call_graph, centrality_table, detect_communities
 from data.analyzer.markov import predict_next_call
 from data.analyzer.mutual import mutual_contacts
-from data.analyzer.risk import compute_risk
+from data.analyzer.risk import RiskAssessment
+from data.analyzer.ml_risk import MLRiskEngine
 from data.loader import load_single_file
 from maps.folium_builder import build_map as build_folium_map
 
@@ -66,6 +67,9 @@ class MainWindow(QMainWindow):
         self.db = Database(self.db_path)
         self.db.open()
         self.audit = AuditTrail(self.db)
+
+        # Initialize the AI Engine
+        self.ml_engine = MLRiskEngine()
 
         self.df_raw_a = pd.DataFrame()
         self.df_raw_b = pd.DataFrame()
@@ -255,41 +259,103 @@ class MainWindow(QMainWindow):
     # ============================================================
 
     def _on_open_filters(self) -> None:
-        dlg = FiltersDialog(self, default_from=self._filter_state.get("from"), default_to=self._filter_state.get("to"),
-                            default_phone=self._filter_state.get("phone", ""))
-        if dlg.exec_() != FiltersDialog.Accepted: return
+        dlg = FiltersDialog(
+            self,
+            default_from=self._filter_state.get("from"),
+            default_to=self._filter_state.get("to"),
+            default_phone=self._filter_state.get("phone", ""),
+        )
+
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
         values = dlg.get_values()
+
+        # If they cleared everything in the dialog
+        if not values["phone"] and not values["use_date"]:
+            self._clear_filter()
+            return
+
         self._filter_state = values
         self._apply_filter()
-        self.audit.log(self.current_user, self.current_role, "APPLY_FILTER",
-                       f"phone='{values['phone']}', date_range={values['use_date']}")
+        self.audit.log(
+            self.current_user, self.current_role,
+            "APPLY_FILTER",
+            f"phone='{values['phone']}', date_range={values['use_date']}",
+        )
 
     def _apply_filter(self) -> None:
         if self.df_raw_a.empty:
             toast(self, "No data to filter", tone="warning")
             return
+
         df = self.df_raw_a.copy()
         state = self._filter_state
+        filter_applied = False
+        original_count = len(df)
+
+        # 1. Phone Filter
         phone = state.get("phone", "")
         if phone:
             df = df[
-                df["party_a"].astype(str).str.contains(phone, na=False) | df["party_b"].astype(str).str.contains(phone,
-                                                                                                                 na=False)]
+                df["party_a"].astype(str).str.contains(phone, na=False)
+                | df["party_b"].astype(str).str.contains(phone, na=False)
+                ]
+            filter_applied = True
+
+        # 2. Date/Time Filter
         if state.get("use_date") and "timestamp" in df.columns:
-            dt_from, dt_to = state.get("from"), state.get("to")
-            if dt_from is not None and dt_to is not None:
-                df = df[(df["timestamp"] >= pd.Timestamp(dt_from)) & (df["timestamp"] <= pd.Timestamp(dt_to))]
+            dt_from = state.get("from")
+            dt_to = state.get("to")
+
+            if dt_from and dt_to:
+                try:
+                    # Drop missing dates
+                    df = df.dropna(subset=["timestamp"])
+
+                    # Force convert to pandas datetime
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+
+                    # Convert UI strings to datetime
+                    start_time = pd.to_datetime(str(dt_from))
+                    end_time = pd.to_datetime(str(dt_to))
+
+                    # FIX: Prevent inverted dates
+                    if start_time > end_time:
+                        toast(self, "Error: 'From' date cannot be after 'To' date.", tone="error")
+                        return
+
+                    # Apply the mask
+                    mask = (df["timestamp"] >= start_time) & (df["timestamp"] <= end_time)
+                    df = df[mask]
+
+                    filter_applied = True
+
+                except Exception as e:
+                    log.exception(f"Date filter failed: {e}")
+                    toast(self, "Invalid date range format", tone="error")
+                    return
+
         self.df_a = df.reset_index(drop=True)
         self._refresh_all()
-        if len(self.df_a) < len(self.df_raw_a):
-            self.status_label.setText(f"Filtered: {len(self.df_a):,} of {len(self.df_raw_a):,} records")
-            toast(self, f"Filtered to {len(self.df_a):,} records", tone="info")
+
+        # Update UI based on whether a filter is active
+        if filter_applied:
+            self.toolbar.btn_filters.hide()
+            self.status_label.setText(f"🟠 FILTER ACTIVE | Showing {len(self.df_a):,} of {original_count:,} records")
+            self.status_label.setStyleSheet(
+                "color: #D97706; font-weight: bold; background-color: #FEF3C7; padding: 2px 6px; border-radius: 4px;")
+            toast(self, f"Filtered to {len(self.df_a):,} records", tone="success")
         else:
+            self.toolbar.btn_filters.show()
             self.status_label.setText(f"{len(self.df_a):,} records (no filter applied)")
+            self.status_label.setStyleSheet("color: black; font-weight: normal; background-color: transparent;")
 
     def _clear_filter(self) -> None:
         self._filter_state = {"phone": "", "use_date": False, "from": None, "to": None}
         self.df_a = self.df_raw_a.copy()
+        self.toolbar.btn_filters.show()
+        self.status_label.setStyleSheet("color: black; font-weight: normal; background-color: transparent;")
         self._refresh_all()
         toast(self, "Filters cleared", tone="info")
 
@@ -325,6 +391,9 @@ class MainWindow(QMainWindow):
         self.df_a = pd.DataFrame()
         self.df_b = pd.DataFrame()
         self._filter_state = {"phone": "", "use_date": False, "from": None, "to": None}
+
+        # Reset UI
+        self.toolbar.btn_filters.show()
         self.tab_dashboard.clear()
         self.tab_network.clear()
         self.tab_map.clear()
@@ -332,6 +401,8 @@ class MainWindow(QMainWindow):
         self.tab_report.clear()
         self.tab_inspector.clear()
         self.tab_database.refresh()
+
+        self.status_label.setStyleSheet("color: black; font-weight: normal; background-color: transparent;")
         self.status_label.setText("Session reset — no data loaded.")
         self.toolbar.search.clear()
         self.audit.log(self.current_user, self.current_role, "RESET_SESSION", "Cleared all loaded CDR data.")
@@ -420,7 +491,6 @@ class MainWindow(QMainWindow):
             self.df_b = df.copy()
 
         if target == "A" and "timestamp" in df.columns and df["timestamp"].notna().any():
-            # Floor to seconds to prevent nanosecond warnings
             self._filter_state["from"] = df["timestamp"].min().floor("s").to_pydatetime()
             self._filter_state["to"] = df["timestamp"].max().floor("s").to_pydatetime()
 
@@ -428,6 +498,8 @@ class MainWindow(QMainWindow):
         self.audit.log(self.current_user, self.current_role, f"LOAD_{target}", f"{label} from {path}")
         toast(self, label + " loaded successfully", tone="success")
         self.status_label.setText(label)
+
+        self.toolbar.btn_filters.show()  # Ensure filter button is visible on new load
         self._refresh_all()
 
     def _load_bulk(self, paths) -> None:
@@ -463,13 +535,14 @@ class MainWindow(QMainWindow):
         self.df_a = combined.copy()
 
         if "timestamp" in combined.columns and combined["timestamp"].notna().any():
-            # Floor to seconds to prevent nanosecond warnings
             self._filter_state["from"] = combined["timestamp"].min().floor("s").to_pydatetime()
             self._filter_state["to"] = combined["timestamp"].max().floor("s").to_pydatetime()
 
         label = f"Bulk: {len(frames)} files, {len(combined):,} records"
         self.audit.log(self.current_user, self.current_role, "LOAD_BULK", label)
         self.status_label.setText(label)
+
+        self.toolbar.btn_filters.show()  # Ensure filter button is visible on new load
         self._refresh_all()
 
         if errors:
@@ -519,14 +592,18 @@ class MainWindow(QMainWindow):
         try:
             from reports.pdf_builder import build_dossier
             df = self.df_a
-            risk = compute_risk(df)
+
+            risk_score, risk_level = self.ml_engine.predict_risk(df)
             top = df["party_b"].dropna().astype(str).value_counts().head(20) if "party_b" in df.columns else pd.Series(
                 dtype=int)
             towers = df["cell_id"].dropna().astype(str).value_counts().head(
                 20) if "cell_id" in df.columns else pd.Series(dtype=int)
-            build_dossier(path=Path(path), investigator=self.current_user, role=self.current_role, case_id="N/A",
-                          risk_score=risk.score, risk_level=risk.level, risk_rationale=risk.rationale,
-                          total_records=len(df), top_contacts=list(top.items()), towers=list(towers.items()))
+
+            build_dossier(
+                path=Path(path), investigator=self.current_user, role=self.current_role, case_id="N/A",
+                risk_score=risk_score, risk_level=risk_level, risk_rationale="AI Predicted (Random Forest)",
+                total_records=len(df), top_contacts=list(top.items()), towers=list(towers.items())
+            )
             self._hide_progress()
             self.audit.log(self.current_user, self.current_role, "EXPORT_PDF", str(path))
             toast(self, "PDF saved", tone="success")
@@ -559,7 +636,15 @@ class MainWindow(QMainWindow):
             communities = detect_communities(g)
             markov_preds = predict_next_call(df)
             mutual = mutual_contacts(df, self.df_b) if not self.df_b.empty else None
-            risk = compute_risk(df)
+
+            # AI Risk Engine
+            risk_score, risk_level = self.ml_engine.predict_risk(df)
+            risk = RiskAssessment(
+                score=risk_score,
+                level=risk_level,
+                rationale="Prediction generated by Random Forest ML Model."
+            )
+
             anom_summary = summary(df)
             short = short_calls(df)
             night = night_calls(df)
@@ -573,7 +658,7 @@ class MainWindow(QMainWindow):
             self.tab_inspector.update_data(df)
             self.tab_database.refresh()
 
-            self.status_label.setText(f"{len(df):,} records · Risk: {risk.score}/100 ({risk.level})")
+            self.status_label.setText(f"{len(df):,} records · AI Risk: {risk.score}/100 ({risk.level})")
         except Exception as e:
             log.exception("Refresh pipeline failed.")
             QMessageBox.critical(self, "Analysis error", str(e))
