@@ -1,28 +1,15 @@
-"""HMAC-signed, hash-chained audit trail.
-
-Every entry signs (previous_hash | investigator | role | action |
-details | timestamp). This creates a blockchain-like chain: deleting
-or modifying any entry breaks verification for all subsequent entries.
-"""
 import logging
 import sqlite3
 from datetime import datetime, timezone
-
 from core.crypto import audit_hmac
-
 log = logging.getLogger(__name__)
-
 GENESIS_HASH = "GENESIS"
-
-
 class AuditTrail:
     """Append-only, HMAC-signed, hash-chained audit log."""
 
     def __init__(self, db) -> None:
         self._db = db
-
     # ---------- write ----------
-
     def log(
         self,
         investigator: str,
@@ -32,7 +19,6 @@ class AuditTrail:
     ) -> None:
         """Append an entry, chained to the previous entry's signature."""
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
         # Fetch previous entry's signature (or GENESIS for the first)
         previous_hash = GENESIS_HASH
         try:
@@ -46,7 +32,6 @@ class AuditTrail:
                     previous_hash = row[0]
         except sqlite3.Error:
             log.exception("Failed to read previous audit hash.")
-
         raw = (
             f"{previous_hash}|{investigator}|{role}|"
             f"{action_type}|{details}|{ts}"
@@ -65,7 +50,6 @@ class AuditTrail:
                 )
         except sqlite3.Error:
             log.exception("Audit logging failed.")
-
     # ---------- read ----------
 
     def fetch_all(self):
@@ -74,7 +58,6 @@ class AuditTrail:
             cur.execute("SELECT * FROM audit_trail_log ORDER BY id DESC")
             cols = [d[0] for d in cur.description]
             return cols, cur.fetchall()
-
     # ---------- verify ----------
 
     def verify_entry(
@@ -110,13 +93,10 @@ class AuditTrail:
         except sqlite3.Error:
             log.exception("Failed to fetch audit chain.")
             return 0, 0
-
         if not rows:
             return 0, 0
-
         valid = 0
         expected_previous = GENESIS_HASH
-
         for row in rows:
             (row_id, inv, role, action, details,
              prev_hash, sig, ts) = row
@@ -125,14 +105,11 @@ class AuditTrail:
             if prev_hash != expected_previous:
                 expected_previous = sig  # keep going to count others
                 continue
-
             # 2. Signature must verify
             raw = f"{prev_hash}|{inv}|{role}|{action}|{details}|{ts}"
             if audit_hmac(raw) != sig:
                 expected_previous = sig
                 continue
-
             valid += 1
             expected_previous = sig
-
         return valid, len(rows)
